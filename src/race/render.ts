@@ -74,6 +74,9 @@ export class RaceRenderer {
   private dpr = 1;
   private banner: Banner | undefined;
   private hint: string | undefined;
+  /** Seconds the gear readout stays highlighted after a shift. */
+  private gearFlash = 0;
+  private lastGear = 1;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -335,7 +338,7 @@ export class RaceRenderer {
     ctx.restore();
 
     this.drawAtmosphere();
-    this.drawHud();
+    this.drawHud(dt);
   }
 
   private drawGround(viewHalfW: number, viewHalfH: number): void {
@@ -603,8 +606,14 @@ export class RaceRenderer {
     ctx.fillText(value, x, y);
   }
 
-  private drawHud(): void {
+  private drawHud(dt: number): void {
     const { ctx, sim } = this;
+    const gear = sim.player.drivetrain.gear;
+    if (gear !== this.lastGear) {
+      this.lastGear = gear;
+      this.gearFlash = 0.35;
+    }
+    this.gearFlash = Math.max(0, this.gearFlash - dt);
     const player = sim.player;
     const compact = this.width < 700;
     const scale = compact ? 0.78 : 1;
@@ -691,6 +700,37 @@ export class RaceRenderer {
     ctx.beginPath();
     ctx.arc(cx, cy, radius, start, start + sweep * heatRatio);
     ctx.stroke();
+
+    // Rev counter: inner arc, with the band past the redline shaded red.
+    const { tuning } = player.gearbox;
+    const tachRadius = radius - 15 * scale;
+    const redlineShare = tuning.redlineRpm / tuning.limiterRpm;
+    const rpmShare = clamp(player.drivetrain.rpm / tuning.limiterRpm, 0, 1);
+    ctx.lineWidth = 5 * scale;
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, tachRadius, start, start + sweep * redlineShare);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,45,45,0.5)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, tachRadius, start + sweep * redlineShare, start + sweep);
+    ctx.stroke();
+    const onLimiter = player.drivetrain.limiter && Math.sin(this.clock * 40) > 0;
+    ctx.strokeStyle = onLimiter ? '#ffffff' : rpmShare > redlineShare * 0.9 ? '#ff9a2f' : '#2ff3ff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, tachRadius, start, start + sweep * rpmShare);
+    ctx.stroke();
+
+    // Gear readout, left of the dial.
+    const gearX = cx - radius - 46 * scale;
+    const gearLabel = sim.phase === 'countdown' ? 'N' : player.speed < -5 ? 'R' : String(player.drivetrain.gear);
+    ctx.fillStyle = this.gearFlash > 0 ? 'rgba(255,210,63,0.35)' : 'rgba(10,8,26,0.72)';
+    ctx.beginPath();
+    ctx.roundRect(gearX - 26 * scale, cy - 38 * scale, 52 * scale, 66 * scale, 10 * scale);
+    ctx.fill();
+    this.text(gearLabel, gearX, cy + 8 * scale, 42 * scale, '#ffd23f', 'center');
+    const modeLabel = player.drivetrain.mode === 'manual' ? 'MANU' : 'AUTO';
+    this.text(modeLabel, gearX, cy + 24 * scale, 11 * scale, '#b9b4d6', 'center', 700);
 
     // Speed.
     const kmh = Math.round(Math.abs(player.speed) * KMH_PER_PX_S);

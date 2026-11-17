@@ -1,4 +1,5 @@
 import type { RaceReport } from '../domain/game';
+import type { TransmissionMode } from '../domain/tuning';
 import type { GameState, RaceOutcome, Slot } from '../domain/types';
 
 export type Screen = 'title' | 'intro' | 'hub' | 'prerace' | 'boss' | 'race' | 'result' | 'ending';
@@ -46,6 +47,7 @@ export interface UiState {
   confirm: ConfirmView | undefined;
   hasSave: boolean;
   muted: boolean;
+  transmission: TransmissionMode;
 }
 
 /** What a screen needs to render once a career is loaded. */

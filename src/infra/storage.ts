@@ -1,3 +1,4 @@
+import type { TransmissionMode } from '../domain/tuning';
 import type { GameState } from '../domain/types';
 
 const SAVE_KEY = 'ned-for-speed/save/v1';
@@ -5,9 +6,11 @@ const SETTINGS_KEY = 'ned-for-speed/settings/v1';
 
 export interface Settings {
   readonly muted: boolean;
+  /** Ned's gearbox. Automatic by default; manual is opt-in. */
+  readonly transmission: TransmissionMode;
 }
 
-const DEFAULT_SETTINGS: Settings = { muted: false };
+const DEFAULT_SETTINGS: Settings = { muted: false, transmission: 'auto' };
 
 function isGameState(value: unknown): value is GameState {
   if (typeof value !== 'object' || value === null) return false;
@@ -66,7 +69,7 @@ export function loadSettings(): Settings {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { muted: parsed.muted === true };
+    return { muted: parsed.muted === true, transmission: parsed.transmission === 'manual' ? 'manual' : 'auto' };
   } catch {
     return DEFAULT_SETTINGS;
   }

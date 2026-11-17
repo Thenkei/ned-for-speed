@@ -256,6 +256,13 @@ kbd {
 .icon-btn:hover {
   border-color: var(--cyan);
 }
+.gearbox-btn {
+  width: auto;
+  padding: 0 10px;
+  font: italic 800 13px/1 var(--font-display);
+  letter-spacing: 0.06em;
+  color: var(--gold);
+}
 
 .tag {
   display: inline-flex;

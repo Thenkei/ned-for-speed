@@ -2,7 +2,7 @@
  * Dev harness (see /race-dev.html): launches a race directly, without the
  * career, to work on tracks, physics and rendering.
  * Query params: track, level (player and rival strength), laps, rivals, auto=1 (AI drives),
- * coach=1 (driving tips).
+ * coach=1 (driving tips), gearbox=manual.
  */
 import type { RaceSetup, Racer, Stats, ThemeId } from '../domain/types';
 import { runRace } from './index';
@@ -47,7 +47,7 @@ const setup: RaceSetup = {
 const host = document.getElementById('race');
 const out = document.getElementById('out');
 if (host && out) {
-  runRace(host, setup, { muted: params.get('sound') !== '1' })
+  runRace(host, setup, { muted: params.get('sound') !== '1', transmission: params.get('gearbox') === 'manual' ? 'manual' : 'auto' })
     .then((outcome) => (out.textContent = JSON.stringify(outcome, null, 2)))
     .catch((error: unknown) => (out.textContent = `ERREUR: ${String(error)}`));
 

@@ -1,6 +1,8 @@
 import './race.css';
-import { audio } from '../infra/audio';
+import type { ShiftRequest } from '../domain/drivetrain';
+import type { TransmissionMode } from '../domain/tuning';
 import type { RaceOutcome, RaceSetup } from '../domain/types';
+import { audio } from '../infra/audio';
 import { createRaceInput } from './input';
 import { RaceRenderer, formatTime } from './render';
 import { maxCurvature } from './track';
@@ -16,6 +18,8 @@ import {
 
 export interface RaceOptions {
   readonly muted: boolean;
+  /** Ned's gearbox; automatic when absent. */
+  readonly transmission?: TransmissionMode;
 }
 
 const STEP = 1 / 120;
@@ -56,12 +60,14 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     const overlay = document.createElement('div');
     overlay.className = 'race-pause';
     overlay.hidden = true;
+    const transmission: TransmissionMode = options.transmission ?? 'auto';
+    const gearKeys = transmission === 'manual' ? '<br><b>E / Q</b> monter / descendre un rapport (boîte manuelle)' : '';
     overlay.innerHTML = `
       <div class="race-pause__panel" role="dialog" aria-modal="true" aria-label="Pause">
         <h2>PAUSE</h2>
         <p class="race-pause__keys">
           <b>↑ / W</b> accélérer · <b>↓ / S</b> freiner · <b>← → / A D</b> tourner<br>
-          <b>Espace / Maj</b> nitro · <b>R</b> se remettre sur la route · <b>Échap</b> pause
+          <b>Espace / Maj</b> nitro · <b>R</b> se remettre sur la route · <b>Échap</b> pause${gearKeys}
         </p>
         <button type="button" class="btn btn--primary" data-action="resume">Reprendre</button>
         <button type="button" class="btn btn--danger" data-action="abandon">Abandonner la course</button>
@@ -70,9 +76,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
 
     let sim: RaceSim;
     let renderer: RaceRenderer;
-    const input = createRaceInput(host);
+    const input = createRaceInput(host, { manualGearbox: transmission === 'manual' });
     try {
-      sim = createRaceSim(setup);
+      sim = createRaceSim(setup, { playerTransmission: transmission });
       renderer = new RaceRenderer(canvas, sim);
     } catch (error) {
       input.dispose();
@@ -192,6 +198,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
               renderer.showBanner({ text: `TOUR ${event.lap + 1}/${sim.setup.laps}`, sub: formatTime(event.lapTime), color: '#2ff3ff', ttl: 1.6, big: false });
             }
             break;
+          case 'shift':
+            if (car?.isPlayer) audio.race('shift', event.direction);
+            break;
           case 'finish':
             break;
         }
@@ -244,6 +253,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     let last = performance.now();
     let accumulator = 0;
     let endAnnounced = false;
+    let pendingShift: ShiftRequest = 0;
 
     const tick = (now: number): void => {
       if (disposed) return;
@@ -259,10 +269,14 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
 
         accumulator += elapsed;
         let controls = input.read();
+        // A shift is an edge: kept until a step actually runs, then applied once.
+        const shift = input.consumeShift();
+        if (shift !== 0) pendingShift = shift;
         let steps = 0;
         while (accumulator >= STEP && steps < MAX_STEPS_PER_FRAME) {
           if (debug.autopilot) controls = autopilot(sim.player, STEP);
-          stepRaceSim(sim, controls, STEP);
+          stepRaceSim(sim, { ...controls, shift: pendingShift }, STEP);
+          pendingShift = 0;
           accumulator -= STEP;
           steps++;
         }
@@ -274,14 +288,13 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           announceEnd();
         }
 
-        // Fake gearbox for the engine note: revs climb then drop at each shift.
+        // Engine note from the real drivetrain: revs climb in each gear and drop at every shift.
         const player = sim.player;
-        const speedRatio = Math.min(1, Math.abs(player.speed) / (player.drive.maxSpeed * 1.2));
-        const gearPosition = speedRatio * 5;
-        const revs = player.engine.exploded ? 0 : 0.25 + 0.75 * (gearPosition - Math.floor(Math.min(gearPosition, 4.999)));
+        const { tuning } = player.gearbox;
+        const revs = Math.min(1.05, Math.max(0, (player.drivetrain.rpm - tuning.idleRpm) / (tuning.redlineRpm - tuning.idleRpm)));
         audio.updateEngine({
-          revs: sim.phase === 'countdown' ? 0.2 + (controls.throttle > 0 ? 0.5 : 0) : revs,
-          throttle: player.engine.exploded ? 0 : controls.throttle,
+          revs: player.engine.exploded ? 0 : revs,
+          throttle: player.engine.exploded ? 0 : player.controls.throttle,
           nitro: player.engine.nitroActive,
         });
 

@@ -5,7 +5,14 @@
  */
 
 export type UiSound = 'click' | 'buy' | 'error' | 'equip' | 'win' | 'lose' | 'jewel';
-export type RaceSound = 'beep' | 'go' | 'explosion' | 'bump' | 'lap' | 'finish';
+export type RaceSound =
+  | 'beep'
+  | 'go'
+  | 'explosion'
+  | 'bump'
+  | 'lap'
+  | 'finish'
+  | 'shift';
 
 interface EngineVoice {
   readonly main: OscillatorNode;
@@ -131,6 +138,11 @@ const RACE_SOUNDS: Readonly<Record<RaceSound, (strength: number) => void>> = {
   explosion: () => {
     burst(1.3, 0.9, 1800, 60);
     tone({ frequency: 120, to: 30, duration: 0.9, type: 'sawtooth', volume: 0.4 });
+  },
+  shift: (strength) => {
+    // A dull clunk; upshifts (strength 1) slightly higher than downshifts.
+    burst(0.05, 0.16, 700, 180);
+    tone({ frequency: strength > 0 ? 95 : 75, duration: 0.05, type: 'square', volume: 0.06 });
   },
 };
 

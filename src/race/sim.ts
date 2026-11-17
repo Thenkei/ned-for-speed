@@ -8,7 +8,17 @@ import {
   type EngineSpec,
   type EngineState,
 } from '../domain/engine';
+import {
+  gearboxSpecFrom,
+  gearDriveFactor,
+  initialDrivetrainState,
+  stepDrivetrain,
+  type DrivetrainState,
+  type GearboxSpec,
+  type ShiftRequest,
+} from '../domain/drivetrain';
 import { createRng, type Rng } from '../domain/rng';
+import type { TransmissionMode } from '../domain/tuning';
 import type { RaceOutcome, RaceSetup, RaceStanding, Racer } from '../domain/types';
 import { locate, maxCurvature, sampleAtDistance, trackById, type Track } from './track';
 
@@ -26,6 +36,8 @@ export interface Controls {
   /** -1 (left) … 1 (right). */
   steer: number;
   nitro: boolean;
+  /** Manual gearbox: one gear up / down, applied on a single step. */
+  shift?: ShiftRequest;
 }
 
 export type SimEvent =
@@ -35,7 +47,8 @@ export type SimEvent =
   | { readonly type: 'lap'; readonly carId: number; readonly lap: number; readonly lapTime: number }
   | { readonly type: 'finish'; readonly carId: number }
   | { readonly type: 'countdown'; readonly value: number }
-  | { readonly type: 'go' };
+  | { readonly type: 'go' }
+  | { readonly type: 'shift'; readonly carId: number; readonly gear: number; readonly direction: ShiftRequest };
 
 interface AiState {
   lane: number;
@@ -51,6 +64,8 @@ export interface CarSim {
   readonly drive: DriveSpec;
   readonly engineSpec: EngineSpec;
   engine: EngineState;
+  readonly gearbox: GearboxSpec;
+  drivetrain: DrivetrainState;
   x: number;
   y: number;
   heading: number;
@@ -114,8 +129,23 @@ function wrapAngle(angle: number): number {
   return a;
 }
 
-function createCar(id: number, racer: Racer, isPlayer: boolean, track: Track, gridSlot: number, rng: Rng): CarSim {
+export interface SimOptions {
+  /** Gearbox of Ned's car; rivals always drive automatics. Default: automatic. */
+  readonly playerTransmission?: TransmissionMode;
+}
+
+function createCar(
+  id: number,
+  racer: Racer,
+  isPlayer: boolean,
+  track: Track,
+  gridSlot: number,
+  rng: Rng,
+  transmission: TransmissionMode,
+): CarSim {
   const engineSpec = engineSpecFrom(racer.stats, racer.condition);
+  const drive = driveSpecFrom(racer.stats, racer.condition);
+  const gearbox = gearboxSpecFrom(drive.maxSpeed * engineSpec.nitroSpeedBoost);
   // Two-by-two grid behind the line; the player (last slot) starts at the back.
   const row = Math.floor(gridSlot / 2);
   const side = gridSlot % 2 === 0 ? -1 : 1;
@@ -128,9 +158,11 @@ function createCar(id: number, racer: Racer, isPlayer: boolean, track: Track, gr
     id,
     racer,
     isPlayer,
-    drive: driveSpecFrom(racer.stats, racer.condition),
+    drive,
     engineSpec,
     engine: initialEngineState(engineSpec),
+    gearbox,
+    drivetrain: initialDrivetrainState(transmission, gearbox),
     x: sample.x + sample.nx * lateral,
     y: sample.y + sample.ny * lateral,
     heading: Math.atan2(sample.ty, sample.tx),
@@ -158,12 +190,12 @@ function createCar(id: number, racer: Racer, isPlayer: boolean, track: Track, gr
   };
 }
 
-export function createRaceSim(setup: RaceSetup): RaceSim {
+export function createRaceSim(setup: RaceSetup, options: SimOptions = {}): RaceSim {
   const track = trackById(setup.trackId);
   const rng = createRng(setup.seed);
   const cars: CarSim[] = [];
-  setup.rivals.forEach((racer, index) => cars.push(createCar(index, racer, false, track, index, rng)));
-  const player = createCar(cars.length, setup.player, true, track, cars.length, rng);
+  setup.rivals.forEach((racer, index) => cars.push(createCar(index, racer, false, track, index, rng, 'auto')));
+  const player = createCar(cars.length, setup.player, true, track, cars.length, rng, options.playerTransmission ?? 'auto');
   cars.push(player);
   return {
     setup,
@@ -313,7 +345,9 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   let acceleration = 0;
   if (throttle > 0 && forward < topSpeed) {
     const ratio = clamp(forward / topSpeed, 0, 1);
-    acceleration += drive.accel * (spraying ? car.engineSpec.nitroAccelBoost : 1) * throttle * (1 - ratio * ratio);
+    let push = drive.accel * (spraying ? car.engineSpec.nitroAccelBoost : 1) * throttle * (1 - ratio * ratio);
+    push *= gearDriveFactor(car.gearbox, car.drivetrain, forward);
+    acceleration += push;
   }
   if (forward > topSpeed) acceleration -= 260 + (forward - topSpeed) * 1.5;
   if (brake > 0) {
@@ -348,6 +382,23 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   car.speed = forward;
   car.slip = Math.abs(lateral);
   if (forward * KMH_PER_PX_S > car.topSpeed) car.topSpeed = forward * KMH_PER_PX_S;
+
+  // Engine speed and gears.
+  car.drivetrain = stepDrivetrain(
+    car.drivetrain,
+    car.gearbox,
+    {
+      throttle,
+      speed: forward,
+      clutchIn: false,
+      shift: input.shift ?? 0,
+      wheelspin: 0,
+    },
+    dt,
+  );
+  if (car.drivetrain.shifted !== 0 && car.isPlayer) {
+    sim.events.push({ type: 'shift', carId: car.id, gear: car.drivetrain.gear, direction: car.drivetrain.shifted });
+  }
 
   // Track bookkeeping.
   const previousS = car.s;
@@ -471,6 +522,17 @@ export function stepRaceSim(sim: RaceSim, playerInput: Controls, dt: number): vo
     sim.countdown -= dt;
     const after = Math.ceil(sim.countdown - 0.6);
     if (after !== before && after >= 1 && after <= 3) sim.events.push({ type: 'countdown', value: after });
+    // Clutch in on the grid: Ned can rev the engine (rivals idle).
+    for (const car of sim.cars) {
+      const controls = car.isPlayer ? { ...playerInput, brake: 0, steer: 0, nitro: false } : NEUTRAL;
+      car.controls = controls;
+      car.drivetrain = stepDrivetrain(
+        car.drivetrain,
+        car.gearbox,
+        { throttle: clamp(controls.throttle, 0, 1), speed: 0, clutchIn: true, shift: 0, wheelspin: 0 },
+        dt,
+      );
+    }
     if (sim.countdown <= 0) {
       sim.phase = 'racing';
       sim.events.push({ type: 'go' });

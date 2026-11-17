@@ -1,3 +1,4 @@
+import type { ShiftRequest } from '../domain/drivetrain';
 import type { Controls } from './sim';
 
 /**
@@ -20,6 +21,14 @@ const KEY_BINDINGS: Readonly<Record<string, keyof KeyState>> = {
   KeyN: 'nitro',
 };
 
+/** Manual gearbox. Physical keys: E / Q on QWERTY, E / A on AZERTY — next to the WASD/ZQSD cluster. */
+const SHIFT_BINDINGS: Readonly<Record<string, ShiftRequest>> = {
+  KeyE: 1,
+  KeyQ: -1,
+  PageUp: 1,
+  PageDown: -1,
+};
+
 interface KeyState {
   up: boolean;
   down: boolean;
@@ -35,14 +44,22 @@ export interface RaceInput {
   /** True once, the frame after the player asked for it. */
   consumePause(): boolean;
   consumeReset(): boolean;
+  /** Gear change requested since the last call (the latest wins). */
+  consumeShift(): ShiftRequest;
   dispose(): void;
 }
 
-export function createRaceInput(host: HTMLElement): RaceInput {
+export interface RaceInputOptions {
+  /** Shows the shift buttons on touch screens. */
+  readonly manualGearbox: boolean;
+}
+
+export function createRaceInput(host: HTMLElement, options: RaceInputOptions = { manualGearbox: false }): RaceInput {
   const keys: KeyState = { up: false, down: false, left: false, right: false, nitro: false };
   const touch: KeyState = { up: false, down: false, left: false, right: false, nitro: false };
   let pauseRequested = false;
   let resetRequested = false;
+  let shiftRequested: ShiftRequest = 0;
   const abort = new AbortController();
   const { signal } = abort;
 
@@ -54,6 +71,13 @@ export function createRaceInput(host: HTMLElement): RaceInput {
       return;
     }
     if (!down) return;
+    const shift = SHIFT_BINDINGS[event.code];
+    if (shift !== undefined) {
+      // Holding the key must not run through the whole box.
+      if (!event.repeat) shiftRequested = shift;
+      event.preventDefault();
+      return;
+    }
     if (event.code === 'Escape' || event.code === 'KeyP') {
       pauseRequested = true;
       event.preventDefault();
@@ -114,6 +138,29 @@ export function createRaceInput(host: HTMLElement): RaceInput {
     reset.setAttribute('aria-label', 'Revenir sur la route');
     reset.addEventListener('click', () => (resetRequested = true), { signal });
     pad.append(left, right, pause, reset);
+    if (options.manualGearbox) {
+      const gears = document.createElement('div');
+      gears.className = 'race-touch__gears';
+      const shiftButton = (label: string, direction: ShiftRequest, aria: string): HTMLButtonElement => {
+        const element = document.createElement('button');
+        element.type = 'button';
+        element.className = 'race-touch__btn race-touch__btn--shift';
+        element.textContent = label;
+        element.setAttribute('aria-label', aria);
+        element.addEventListener(
+          'pointerdown',
+          (event) => {
+            shiftRequested = direction;
+            event.preventDefault();
+          },
+          { signal },
+        );
+        element.addEventListener('contextmenu', (event) => event.preventDefault(), { signal });
+        return element;
+      };
+      gears.append(shiftButton('+', 1, 'Monter un rapport'), shiftButton('−', -1, 'Descendre un rapport'));
+      pad.append(gears);
+    }
     host.append(pad);
   }
 
@@ -139,6 +186,11 @@ export function createRaceInput(host: HTMLElement): RaceInput {
     consumeReset(): boolean {
       const value = resetRequested;
       resetRequested = false;
+      return value;
+    },
+    consumeShift(): ShiftRequest {
+      const value = shiftRequested;
+      shiftRequested = 0;
       return value;
     },
     dispose(): void {

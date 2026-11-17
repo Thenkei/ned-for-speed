@@ -154,3 +154,22 @@
 .race-touch__reset {
   left: calc(50% + 54px);
 }
+
+/* Manual gearbox on touch screens: a small +/− stack above the brake/nitro pair. */
+.race-touch__gears {
+  position: absolute;
+  right: 14px;
+  bottom: max(280px, calc(env(safe-area-inset-bottom) + 280px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.race-touch__btn--shift {
+  width: 56px;
+  height: 56px;
+  border-color: #ffd23f;
+  color: #ffd23f;
+  font-size: 24px;
+}

@@ -52,6 +52,7 @@ function topBar(view: View): string {
         </button>
       </div>
       <div class="topbar-actions">
+        <button type="button" class="icon-btn gearbox-btn" data-action="toggle-transmission" aria-label="${ui.transmission === 'manual' ? 'Boîte manuelle (E / Q pour passer les rapports) : passer en automatique' : 'Boîte automatique : passer en manuelle'}" title="${ui.transmission === 'manual' ? 'Boîte manuelle · E / Q pour passer les rapports' : 'Boîte automatique · clique pour passer en manuelle'}">${ui.transmission === 'manual' ? 'BVM' : 'BVA'}</button>
         <button type="button" class="icon-btn" data-action="toggle-mute" aria-label="${ui.muted ? 'Activer le son' : 'Couper le son'}" title="${ui.muted ? 'Activer le son' : 'Couper le son'}">${ui.muted ? '🔇' : '🔊'}</button>
         <button type="button" class="icon-btn" data-action="to-title" aria-label="Menu principal" title="Menu principal">⏏</button>
       </div>

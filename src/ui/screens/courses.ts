@@ -213,6 +213,7 @@ export function controlsHelp(): string {
         <li><kbd>←</kbd> <kbd>→</kbd> / <kbd>A</kbd> <kbd>D</kbd> <span>Tourner</span></li>
         <li><kbd>Espace</kbd> / <kbd>Maj</kbd> <span>Nitro</span></li>
         <li><kbd>R</kbd> <span>Revenir sur la route</span></li>
+        <li><kbd>E</kbd> / <kbd>Q</kbd> <span>Monter / descendre un rapport (boîte manuelle)</span></li>
         <li><kbd>Échap</kbd> <span>Pause</span></li>
       </ul>
       <p class="nitro-warning">

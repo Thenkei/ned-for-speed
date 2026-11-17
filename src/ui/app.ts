@@ -92,6 +92,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     confirm: undefined,
     hasSave: game !== undefined,
     muted: settings.muted,
+    transmission: settings.transmission,
   };
   audio.setMuted(ui.muted);
 
@@ -289,7 +290,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     try {
       if (!host) throw new Error('race host missing');
       const runner = window.__ned?.raceOverride ?? runRace;
-      outcome = await runner(host, setup, { muted: ui.muted });
+      outcome = await runner(host, setup, { muted: ui.muted, transmission: ui.transmission });
     } catch (error) {
       console.error('[race] the race crashed, nothing was applied', error);
     } finally {
@@ -410,7 +411,13 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     'toggle-mute': () => {
       ui.muted = !ui.muted;
       audio.setMuted(ui.muted);
-      saveSettings({ muted: ui.muted });
+      saveSettings({ muted: ui.muted, transmission: ui.transmission });
+      audio.ui('click');
+      render();
+    },
+    'toggle-transmission': () => {
+      ui.transmission = ui.transmission === 'auto' ? 'manual' : 'auto';
+      saveSettings({ muted: ui.muted, transmission: ui.transmission });
       audio.ui('click');
       render();
     },

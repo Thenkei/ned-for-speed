@@ -15,6 +15,9 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
   qui augmente les primes.
 - **But** : battre les cinq boss, jusqu'à Jacky Senior, la Légende du Périph'. L'onglet
   « Grands noms » montre qui respecte déjà Ned, qui le snobe encore, et ce qu'il reste à faire.
+- **Moteur vivant** : régime moteur simulé (ralenti, inertie, patinage d'embrayage en 1re), boîte
+  5 rapports automatique par défaut ou **manuelle** en option (bouton BVA/BVM). Le son du moteur
+  suit le vrai régime : il monte dans chaque rapport et retombe à chaque passage.
 - **Prise en main** : des conseils s'affichent pendant les deux premières courses (commandes,
   nitro en ligne droite, relâcher avant le rouge), et le garage indique combien de secondes de
   nitro la voiture encaisse avant la zone rouge.
@@ -43,6 +46,7 @@ aussi bien à la racine d'un domaine que sous `/<repo>/`.
 | Freiner / marche arrière | ↓ ou S | FREIN |
 | Tourner | ← → ou A D (Q D en AZERTY) | ◀ ▶ |
 | Nitro | Espace ou Maj | NITRO |
+| Monter / descendre un rapport (boîte manuelle) | E / Q (E / A en AZERTY) | + / − |
 | Revenir sur la route | R | — |
 | Pause | Échap ou P | Ⅱ |
 
@@ -64,7 +68,19 @@ scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts`
 ```
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
-(`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite), pratique pour travailler un circuit ou le rendu.
+(`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `gearbox=manual` : boîte manuelle,
+`sound=1` : son), pratique pour travailler un circuit ou le rendu.
+
+### Moteur et boîte de vitesses
+
+Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
+
+| Bloc | Paramètres principaux |
+| --- | --- |
+| `DRIVETRAIN_TUNING` | ralenti / zone rouge / rupteur (tr/min), étagement `gearSpan`, seuils de passage auto, vitesses de montée du régime, pénalité de sous-régime et bonus de plage de puissance (boîte manuelle) |
+
+Le modèle est pur et testé : `drivetrain.ts` (rapports, régime). En boîte automatique, la
+physique est identique au bit près à celle d'avant : la boîte ne change que le son et l'affichage.
 
 Toutes les marques, modèles et personnages sont inventés. Les illustrations de `public/assets`
 ont été générées pour le projet ; les sons sont synthétisés à la volée.

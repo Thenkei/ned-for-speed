@@ -32,6 +32,11 @@ export function renderTitle(ui: Readonly<UiState>): string {
             variant: ui.hasSave ? 'ghost' : 'primary',
           })}
           ${button({
+            action: 'toggle-transmission',
+            label: ui.transmission === 'manual' ? '🕹️ Boîte manuelle' : '🕹️ Boîte automatique',
+            variant: 'ghost',
+          })}
+          ${button({
             action: 'toggle-mute',
             label: ui.muted ? '🔇 Son coupé' : '🔊 Son activé',
             variant: 'ghost',

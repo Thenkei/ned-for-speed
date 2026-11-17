@@ -1,5 +1,6 @@
 import './race.css';
 import type { ShiftRequest } from '../domain/drivetrain';
+import type { LaunchEnd, LaunchGrade } from '../domain/launch';
 import type { TransmissionMode } from '../domain/tuning';
 import type { RaceOutcome, RaceSetup } from '../domain/types';
 import { audio } from '../infra/audio';
@@ -21,6 +22,17 @@ export interface RaceOptions {
   /** Ned's gearbox; automatic when absent. */
   readonly transmission?: TransmissionMode;
 }
+
+const LAUNCH_BANNERS: Readonly<Record<LaunchGrade, { text: string; sub?: string; color: string } | undefined>> = {
+  perfect: { text: 'DÉPART PARFAIT !', sub: 'Turbo au départ', color: '#4dff6a' },
+  good: undefined,
+  under: { text: 'DÉPART MOU…', sub: 'Pas assez de tours : le moteur cale', color: '#9ab4ff' },
+  over: { text: 'PATINAGE !', sub: 'Relâche ↑ puis réaccélère', color: '#ff9a2f' },
+};
+
+const LAUNCH_END_BANNERS: Partial<Record<LaunchEnd, { text: string; color: string }>> = {
+  cancelled: { text: 'Grip retrouvé', color: '#4dff6a' },
+};
 
 const STEP = 1 / 120;
 const MAX_STEPS_PER_FRAME = 6;
@@ -198,6 +210,29 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
               renderer.showBanner({ text: `TOUR ${event.lap + 1}/${sim.setup.laps}`, sub: formatTime(event.lapTime), color: '#2ff3ff', ttl: 1.6, big: false });
             }
             break;
+          case 'launch': {
+            if (!car?.isPlayer) break;
+            const banner = LAUNCH_BANNERS[event.grade];
+            if (banner) renderer.showBanner({ ...banner, ttl: 1.6, big: false });
+            if (event.grade === 'perfect') {
+              audio.race('perfect-start');
+              renderer.boostFlash(car);
+            } else if (event.grade === 'over') {
+              audio.race('wheelspin');
+            } else if (event.grade === 'under') {
+              audio.race('bog');
+            }
+            break;
+          }
+          case 'launch-end': {
+            if (!car?.isPlayer) break;
+            const banner = LAUNCH_END_BANNERS[event.endedBy];
+            if (banner && event.grade === 'over') {
+              renderer.showBanner({ ...banner, ttl: 0.9, big: false });
+              audio.race('grip');
+            }
+            break;
+          }
           case 'shift':
             if (car?.isPlayer) audio.race('shift', event.direction);
             break;
@@ -218,6 +253,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       const player = sim.player;
       if (player.engine.exploded || player.finished || sim.phase === 'finished') return undefined;
       const touch = input.touch;
+      if (sim.phase === 'racing' && player.launch?.phase === 'wheelspin' && player.controls.throttle > 0) {
+        return touch ? 'Ça patine ! Touche FREIN un instant pour reprendre du grip' : 'Ça patine ! Relâche ↑ et réappuie pour reprendre du grip';
+      }
       if (sim.phase === 'racing') {
         // Stuck = trying to move and not moving (not simply parked off the throttle).
         const pushing = player.controls.throttle > 0 || player.controls.brake > 0;
@@ -229,7 +267,12 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         coach.grindingFor = onWall ? coach.grindingFor + elapsed : 0;
       }
       if (!setup.coach) return undefined;
-      if (sim.phase === 'countdown' || sim.time < 3) {
+      if (sim.phase === 'countdown') {
+        return touch
+          ? 'Départ : maintiens NITRO quand le « 1 » s’affiche, aiguille dans le vert'
+          : 'Départ : appuie sur ↑ quand le « 1 » s’affiche, aiguille dans le vert';
+      }
+      if (sim.time < 3) {
         return touch ? '◀ ▶ pour tourner · la voiture accélère toute seule' : '↑ accélérer · ← → tourner · ↓ freiner';
       }
       if (coach.grindingFor > 0.8) {
@@ -269,6 +312,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
 
         accumulator += elapsed;
         let controls = input.read();
+        // Touch throttle is automatic, which would over-rev every start: on the
+        // grid, touch players rev with the NITRO button instead (nitro is inert there).
+        if (input.touch && sim.phase === 'countdown') controls = { ...controls, throttle: controls.nitro ? 1 : 0 };
         // A shift is an edge: kept until a step actually runs, then applied once.
         const shift = input.consumeShift();
         if (shift !== 0) pendingShift = shift;

@@ -28,6 +28,7 @@ import {
 import { JEWEL_KINDS, jewelKind, swagMultiplier } from '../src/domain/jewels';
 import { buildPart, rarityOdds, rollPart } from '../src/domain/parts';
 import { createRng } from '../src/domain/rng';
+import { WEATHER_PROFILES } from '../src/domain/tuning';
 import { RARITIES, type GameState, type RaceOutcome } from '../src/domain/types';
 import { DISTRICTS } from '../src/domain/world';
 
@@ -161,6 +162,24 @@ describe('race results', () => {
     expect(next.shop.parts).not.toEqual(state.shop.parts);
   });
 
+  it('pays a rain bonus on a wet race, and only there', () => {
+    const state = newGame(9);
+    const dry = applyEventOutcome(state, event, outcome({ weather: 'dry' })).report;
+    const legacy = applyEventOutcome(state, event, outcome()).report;
+    const wet = applyEventOutcome(state, event, outcome({ weather: 'wet' }));
+    expect(legacy.prize).toBe(dry.prize);
+    expect(dry.weatherBonus).toBeUndefined();
+    const bonus = Math.round(dry.prize * (WEATHER_PROFILES.wet.prizeMultiplier - 1));
+    expect(bonus).toBeGreaterThan(0);
+    expect(wet.report.weatherBonus).toBe(bonus);
+    expect(wet.report.prize).toBe(dry.prize + bonus);
+    expect(wet.state.money).toBe(state.money - event.entryFee + dry.prize + bonus);
+    // No prize, no bonus: rain pays only those who score.
+    const lost = applyEventOutcome(state, event, outcome({ weather: 'wet', exploded: true })).report;
+    expect(lost.prize).toBe(0);
+    expect(lost.weatherBonus).toBeUndefined();
+  });
+
   it('pays less for a repeat win and nothing for a defeat', () => {
     const first = applyEventOutcome(newGame(9), event, outcome()).state;
     const repeat = applyEventOutcome(first, event, outcome());
@@ -208,6 +227,22 @@ describe('race results', () => {
     expect(eventRaceSetup(state, parking, event).coach).toBe(false);
   });
 
+  it('keeps the coached races dry, then lets the forecast decide (deterministically)', () => {
+    let state = newGame(9);
+    for (let i = 0; i < 2; i++) {
+      expect(eventRaceSetup(state, parking, event).weather).toBe('dry');
+      state = applyEventOutcome(state, event, outcome()).state;
+    }
+    const seen = new Set<string | undefined>();
+    for (let i = 0; i < 40; i++) {
+      const setup = eventRaceSetup(state, parking, event);
+      expect(eventRaceSetup(state, parking, event).weather).toBe(setup.weather);
+      seen.add(setup.weather);
+      state = applyEventOutcome(state, event, outcome()).state;
+    }
+    expect(seen).toEqual(new Set(['dry', 'wet']));
+  });
+
   it('builds a race setup with every rival', () => {
     const state = newGame(9);
     const setup = eventRaceSetup(state, parking, event);
@@ -244,6 +279,15 @@ describe('bosses and jewels', () => {
     expect(report.unlockedDistrictId).toBe(DISTRICTS[1]!.id);
     expect(isDistrictUnlocked(next, DISTRICTS[1]!)).toBe(true);
     expect(isDistrictUnlocked(next, DISTRICTS[2]!)).toBe(false);
+  });
+
+  it('pays the boss prize with the rain bonus in the wet', () => {
+    const state = clearDistrict(newGame(11), 0);
+    const stake = eligibleStakes(state, parking.boss)[0]!;
+    const dry = unwrap(applyBossOutcome(state, parking, stake.uid, outcome({ racers: 2 }))).report;
+    const wet = unwrap(applyBossOutcome(state, parking, stake.uid, outcome({ racers: 2, weather: 'wet' }))).report;
+    expect(wet.weatherBonus).toBe(Math.round(dry.prize * (WEATHER_PROFILES.wet.prizeMultiplier - 1)));
+    expect(wet.prize).toBe(dry.prize + (wet.weatherBonus ?? 0));
   });
 
   it('takes the staked jewel on a defeat', () => {

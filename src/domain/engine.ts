@@ -155,6 +155,11 @@ export interface DriveSpec {
   readonly steerRate: number;
   /** How fast sideways slip is scrubbed off (1/s). */
   readonly slipRecovery: number;
+  /**
+   * Maximum longitudinal acceleration the tyres can put down before they
+   * spin (px/s²). Unlimited on a dry road; the weather lowers it.
+   */
+  readonly traction: number;
 }
 
 export function driveSpecFrom(stats: Stats, condition: number): DriveSpec {
@@ -170,6 +175,7 @@ export function driveSpecFrom(stats: Stats, condition: number): DriveSpec {
     grip: 380 + handling * 6,
     steerRate: 2.0 + handling * 0.008,
     slipRecovery: 4.5 + handling * 0.06,
+    traction: Number.POSITIVE_INFINITY,
   };
 }
 

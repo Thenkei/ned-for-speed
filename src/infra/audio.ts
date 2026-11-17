@@ -12,6 +12,10 @@ export type RaceSound =
   | 'bump'
   | 'lap'
   | 'finish'
+  | 'perfect-start'
+  | 'bog'
+  | 'wheelspin'
+  | 'grip'
   | 'shift';
 
 interface EngineVoice {
@@ -139,6 +143,12 @@ const RACE_SOUNDS: Readonly<Record<RaceSound, (strength: number) => void>> = {
     burst(1.3, 0.9, 1800, 60);
     tone({ frequency: 120, to: 30, duration: 0.9, type: 'sawtooth', volume: 0.4 });
   },
+  'perfect-start': () => {
+    [784, 1175, 1568].forEach((frequency, i) => tone({ frequency, duration: 0.14, delay: i * 0.06, type: 'triangle', volume: 0.16 }));
+  },
+  bog: () => tone({ frequency: 150, to: 70, duration: 0.45, type: 'sawtooth', volume: 0.12 }),
+  wheelspin: () => burst(0.6, 0.28, 3200, 1400),
+  grip: () => tone({ frequency: 520, to: 880, duration: 0.12, type: 'triangle', volume: 0.12 }),
   shift: (strength) => {
     // A dull clunk; upshifts (strength 1) slightly higher than downshifts.
     burst(0.05, 0.16, 700, 180);

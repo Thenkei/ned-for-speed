@@ -1,4 +1,7 @@
 import { KMH_PER_PX_S, MAX_HEAT } from '../domain/engine';
+import { overRevThreshold } from '../domain/launch';
+import { createRng } from '../domain/rng';
+import { LAUNCH_TUNING } from '../domain/tuning';
 import { BODY_SHAPES, drawCar, rgba } from './carSprite';
 import { buildScenery, createSpeckPattern, drawSceneryItem, type Scenery } from './scenery';
 import { playerPosition, rankCars, type CarSim, type RaceSim } from './sim';
@@ -18,6 +21,22 @@ interface Particle {
   color: string;
 }
 
+interface Puddle {
+  x: number;
+  y: number;
+  rx: number;
+  ry: number;
+  angle: number;
+}
+
+/** Rain streak in screen space (CSS pixels). */
+interface Drop {
+  x: number;
+  y: number;
+  length: number;
+  speed: number;
+}
+
 interface SkidSegment {
   x1: number;
   y1: number;
@@ -35,6 +54,9 @@ export interface Banner {
 }
 
 const MAX_PARTICLES = 420;
+const RAIN_DROPS = 220;
+/** Rain falls slightly sideways, as if blown across the city. */
+const RAIN_SLANT = 0.22;
 const MAX_SKIDS = 900;
 const FONT = '"Arial Narrow", "Helvetica Neue Condensed", "Roboto Condensed", Impact, "Helvetica Neue", Arial, sans-serif';
 
@@ -74,6 +96,9 @@ export class RaceRenderer {
   private dpr = 1;
   private banner: Banner | undefined;
   private hint: string | undefined;
+  private readonly wet: boolean;
+  private readonly puddles: Puddle[] = [];
+  private readonly drops: Drop[] = [];
   /** Seconds the gear readout stays highlighted after a shift. */
   private gearFlash = 0;
   private lastGear = 1;
@@ -116,6 +141,28 @@ export class RaceRenderer {
 
     const stride = Math.max(1, Math.floor(sim.track.samples.length / 160));
     this.minimapPoints = sim.track.samples.filter((_, i) => i % stride === 0).map((s) => ({ x: s.x, y: s.y }));
+
+    this.wet = sim.weather.id === 'wet';
+    if (this.wet) {
+      // Puddles are placed from the race seed so they sit in the same spots every lap.
+      const rng = createRng(sim.setup.seed ^ 0x9e3779b9);
+      const count = Math.round(sim.track.length / 140);
+      for (let i = 0; i < count; i++) {
+        const sample = sim.track.samples[rng.int(0, sim.track.samples.length - 1)];
+        if (!sample) continue;
+        const lateral = rng.range(-sim.track.halfWidth * 0.85, sim.track.halfWidth * 0.85);
+        this.puddles.push({
+          x: sample.x + sample.nx * lateral,
+          y: sample.y + sample.ny * lateral,
+          rx: rng.range(14, 40),
+          ry: rng.range(7, 16),
+          angle: Math.atan2(sample.ty, sample.tx) + rng.range(-0.4, 0.4),
+        });
+      }
+      for (let i = 0; i < RAIN_DROPS; i++) {
+        this.drops.push({ x: Math.random(), y: Math.random(), length: 10 + Math.random() * 16, speed: 900 + Math.random() * 500 });
+      }
+    }
   }
 
   private createGlowSprite(color: string): HTMLCanvasElement {
@@ -195,6 +242,28 @@ export class RaceRenderer {
     if (car.isPlayer) this.addShake(1.2);
   }
 
+  /** Short blue flame burst behind the car: the perfect start. */
+  boostFlash(car: CarSim): void {
+    const cos = Math.cos(car.heading);
+    const sin = Math.sin(car.heading);
+    for (let i = 0; i < 22; i++) {
+      const spread = (Math.random() - 0.5) * 0.9;
+      const speed = 80 + Math.random() * 160;
+      this.spawn({
+        kind: 'spark',
+        x: car.x - cos * 22,
+        y: car.y - sin * 22,
+        vx: -Math.cos(car.heading + spread) * speed,
+        vy: -Math.sin(car.heading + spread) * speed,
+        life: 0,
+        maxLife: 0.3 + Math.random() * 0.35,
+        size: 3,
+        color: i % 2 === 0 ? '#2ff3ff' : '#9ae8ff',
+      });
+    }
+    if (car.isPlayer) this.addShake(0.35);
+  }
+
   sparks(car: CarSim, strength: number): void {
     const count = Math.round(3 + strength * 8);
     for (let i = 0; i < count; i++) {
@@ -229,17 +298,50 @@ export class RaceRenderer {
       const rx = rearX + sin * half;
       const ry = rearY - cos * half;
 
-      // Tyre marks when sliding or stamping on the brakes.
-      const skidding = car.slip > 55 || (car.controls.brake > 0.6 && car.speed > 180);
+      // Tyre marks when sliding, stamping on the brakes or spinning the wheels.
+      const spinning = car.wheelspin > 0.3;
+      const skidding = car.slip > 55 || (car.controls.brake > 0.6 && car.speed > 180) || spinning;
       const previous = this.lastRear.get(car.id);
       if (skidding && previous?.active) {
-        this.pushSkid(previous.lx, previous.ly, lx, ly);
-        this.pushSkid(previous.rx, previous.ry, rx, ry);
+        // A wet road does not take rubber: no marks, the water hides them.
+        if (!this.wet) {
+          this.pushSkid(previous.lx, previous.ly, lx, ly);
+          this.pushSkid(previous.rx, previous.ry, rx, ry);
+        }
         if (Math.random() < dt * 22) {
-          this.spawn({ kind: 'smoke', x: rearX, y: rearY, vx: car.vx * 0.15, vy: car.vy * 0.15, life: 0, maxLife: 0.6, size: 7, color: '#9a9a9a' });
+          this.spawn({ kind: 'smoke', x: rearX, y: rearY, vx: car.vx * 0.15, vy: car.vy * 0.15, life: 0, maxLife: 0.6, size: 7, color: this.wet ? '#b8c6dc' : '#9a9a9a' });
         }
       }
       this.lastRear.set(car.id, { lx, ly, rx, ry, active: skidding });
+      // Wheelspin: thick tyre smoke (or a sheet of water) pouring off both rear wheels.
+      if (spinning && Math.random() < dt * 60 * car.wheelspin) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        this.spawn({
+          kind: 'smoke',
+          x: rearX - side * sin * half + (Math.random() - 0.5) * 6,
+          y: rearY + side * cos * half + (Math.random() - 0.5) * 6,
+          vx: -cos * (30 + Math.random() * 50) + (Math.random() - 0.5) * 30,
+          vy: -sin * (30 + Math.random() * 50) + (Math.random() - 0.5) * 30,
+          life: 0,
+          maxLife: 0.9 + Math.random() * 0.6,
+          size: 8 + Math.random() * 6,
+          color: this.wet ? '#c8d4e6' : '#e6e6e6',
+        });
+      }
+      // Wet road: spray thrown up behind every car that is moving.
+      if (this.wet && car.speed > 90 && Math.random() < dt * (car.speed / 40)) {
+        this.spawn({
+          kind: 'smoke',
+          x: rearX + (Math.random() - 0.5) * shape.width,
+          y: rearY + (Math.random() - 0.5) * shape.width,
+          vx: car.vx * 0.35 - cos * 40 + (Math.random() - 0.5) * 50,
+          vy: car.vy * 0.35 - sin * 40 + (Math.random() - 0.5) * 50,
+          life: 0,
+          maxLife: 0.3 + Math.random() * 0.2,
+          size: 3 + Math.random() * 3,
+          color: '#cfdcef',
+        });
+      }
 
       // Engine smoke: grey when hot, black and thick once it has let go.
       const spec = car.engineSpec;
@@ -337,7 +439,7 @@ export class RaceRenderer {
     this.drawParticles();
     ctx.restore();
 
-    this.drawAtmosphere();
+    this.drawAtmosphere(dt);
     this.drawHud(dt);
   }
 
@@ -392,6 +494,7 @@ export class RaceRenderer {
     ctx.strokeStyle = this.asphaltFill;
     ctx.lineWidth = track.def.width;
     ctx.stroke(this.roadPath);
+    if (this.wet) this.drawWetSurface();
 
     ctx.lineCap = 'butt';
     ctx.strokeStyle = 'rgba(255,255,255,0.42)';
@@ -418,6 +521,30 @@ export class RaceRenderer {
     }
   }
 
+  /** Darker, bluish asphalt with standing water that catches a moving glint. */
+  private drawWetSurface(): void {
+    const { ctx, track } = this;
+    ctx.strokeStyle = 'rgba(30,45,80,0.32)';
+    ctx.lineWidth = track.def.width;
+    ctx.stroke(this.roadPath);
+    const glint = 0.1 + 0.05 * Math.sin(this.clock * 1.7);
+    for (const puddle of this.puddles) {
+      if (Math.abs(puddle.x - this.camX) > 1400 || Math.abs(puddle.y - this.camY) > 1400) continue;
+      ctx.save();
+      ctx.translate(puddle.x, puddle.y);
+      ctx.rotate(puddle.angle);
+      ctx.fillStyle = 'rgba(120,150,200,0.2)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, puddle.rx, puddle.ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(220,235,255,${glint})`;
+      ctx.beginPath();
+      ctx.ellipse(-puddle.rx * 0.25, -puddle.ry * 0.3, puddle.rx * 0.45, puddle.ry * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   private drawSkids(): void {
     const { ctx } = this;
     if (this.skids.length === 0) return;
@@ -434,7 +561,8 @@ export class RaceRenderer {
 
   private drawLamps(visible: (x: number, y: number, r: number) => boolean): void {
     const { ctx } = this;
-    const radius = 210;
+    // On a wet road the lamp light pools wider: reflections.
+    const radius = this.wet ? 260 : 210;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const lamp of this.scenery.lamps) {
@@ -492,7 +620,7 @@ export class RaceRenderer {
       ctx.rotate(car.heading);
       drawCar(ctx, car.racer.look, {
         braking: car.controls.brake,
-        nitro: car.engine.nitroActive,
+        nitro: car.engine.nitroActive || car.launch?.phase === 'boost',
         steer: car.steer * 0.45,
         headlights: true,
         time: this.clock + car.id,
@@ -548,10 +676,35 @@ export class RaceRenderer {
     ctx.globalAlpha = 1;
   }
 
-  private drawAtmosphere(): void {
+  private drawRain(dt: number): void {
+    const { ctx } = this;
+    ctx.fillStyle = 'rgba(25,35,70,0.2)';
+    ctx.fillRect(0, 0, this.width, this.height);
+    ctx.strokeStyle = 'rgba(190,210,255,0.33)';
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (const drop of this.drops) {
+      drop.y += (drop.speed * dt) / this.height;
+      drop.x += (drop.speed * RAIN_SLANT * dt) / this.width;
+      if (drop.y > 1) {
+        drop.y -= 1;
+        drop.x = Math.random();
+      }
+      if (drop.x > 1) drop.x -= 1;
+      const x = drop.x * this.width;
+      const y = drop.y * this.height;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - drop.length * RAIN_SLANT, y - drop.length);
+    }
+    ctx.stroke();
+  }
+
+  private drawAtmosphere(dt: number): void {
     const { ctx } = this;
     ctx.fillStyle = this.scenery.theme.tint;
     ctx.fillRect(0, 0, this.width, this.height);
+    if (this.wet) this.drawRain(dt);
     const vignette = ctx.createRadialGradient(
       this.width / 2,
       this.height / 2,
@@ -628,6 +781,7 @@ export class RaceRenderer {
     const lap = clamp(player.lap + 1, 1, sim.setup.laps);
     this.text(`TOUR ${lap}/${sim.setup.laps}`, pad, pad + 76 * scale, 22 * scale, '#2ff3ff');
     this.text(formatTime(sim.time), pad, pad + 102 * scale, 20 * scale, '#ffffff', 'left', 700);
+    if (this.wet) this.text('🌧 PLUIE', pad, pad + 126 * scale, 16 * scale, '#9ab4ff', 'left', 700);
 
     // Running order.
     const ranked = rankCars(sim);
@@ -801,6 +955,42 @@ export class RaceRenderer {
     }
   }
 
+  /**
+   * Countdown rev gauge: where the needle sits relative to the start windows.
+   * Zones come straight from the tuning, so the gauge never lies about them.
+   */
+  private drawLaunchMeter(cx: number, y: number, scale: number): void {
+    const { ctx, sim } = this;
+    const player = sim.player;
+    const { tuning } = player.gearbox;
+    const maxNorm = tuning.limiterRpm / tuning.redlineRpm;
+    const width = Math.min(this.width - 40, 340 * scale);
+    const height = 16 * scale;
+    const left = cx - width / 2;
+    const at = (norm: number): number => left + (clamp(norm, 0, maxNorm) / maxNorm) * width;
+    const overFrom = overRevThreshold(sim.weather);
+    const [perfectLow, perfectHigh] = LAUNCH_TUNING.perfect;
+
+    ctx.fillStyle = 'rgba(10,8,26,0.78)';
+    ctx.fillRect(left - 4, y - 4, width + 8, height + 8);
+    const zones: readonly [number, number, string][] = [
+      [0, LAUNCH_TUNING.underRevBelow, 'rgba(120,140,220,0.45)'],
+      [LAUNCH_TUNING.underRevBelow, overFrom, 'rgba(255,210,63,0.45)'],
+      [perfectLow, perfectHigh, 'rgba(77,255,106,0.85)'],
+      [overFrom, maxNorm, 'rgba(255,60,60,0.75)'],
+    ];
+    for (const [from, to, color] of zones) {
+      ctx.fillStyle = color;
+      ctx.fillRect(at(from), y, at(to) - at(from), height);
+    }
+    const norm = player.drivetrain.rpm / tuning.redlineRpm;
+    const needle = at(norm);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(needle - 2, y - 7 * scale, 4, height + 14 * scale);
+    this.text('RÉGIME', cx, y - 10 * scale, 13 * scale, '#b9b4d6', 'center', 700);
+    this.text(`${Math.round(player.drivetrain.rpm / 100) * 100} tr/min`, cx, y + height + 22 * scale, 15 * scale, '#ffffff', 'center', 700);
+  }
+
   private drawMessages(scale: number): void {
     const { sim } = this;
     const player = sim.player;
@@ -816,6 +1006,13 @@ export class RaceRenderer {
         this.text(sim.setup.title.toUpperCase(), cx, top, 40 * scale, '#ffffff', 'center');
       }
       if (sim.setup.taunt) this.text(`« ${sim.setup.taunt} »`, cx, this.height * 0.74, 19 * scale, '#ffd23f', 'center', 700);
+      this.drawLaunchMeter(cx, top + 92 * scale, scale);
+      return;
+    }
+
+    // Lingering wheelspin, once its banner is gone.
+    if (!this.banner && player.launch?.phase === 'wheelspin' && player.controls.throttle > 0) {
+      if (Math.sin(this.clock * 12) > -0.2) this.text('PATINAGE', cx, top, 34 * scale, '#ff9a2f', 'center');
       return;
     }
 

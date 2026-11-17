@@ -1166,6 +1166,12 @@ kbd {
 .difficulty.insane {
   color: var(--red);
 }
+.weather {
+  white-space: nowrap;
+}
+.weather.wet {
+  color: var(--cyan);
+}
 
 .boss-card {
   display: grid;
@@ -1725,6 +1731,14 @@ kbd {
 }
 .nitro-warning strong {
   color: var(--orange);
+}
+.launch-tip {
+  margin-top: 8px;
+  padding: 9px 12px;
+  border-left: 3px solid var(--green);
+  border-radius: 6px;
+  background: #4dff6a12;
+  font-size: 14px;
 }
 .prerace-actions,
 .result-actions,

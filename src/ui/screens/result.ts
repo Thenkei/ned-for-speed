@@ -67,6 +67,7 @@ export function renderResult(view: View): string {
 
   const rewards: string[] = [];
   if (report.prize > 0) rewards.push(rewardLine('💶', 'Prime', `+${esc(euro(report.prize))}`, 'good'));
+  if (report.weatherBonus) rewards.push(rewardLine('🌧️', 'dont bonus pluie', `+${esc(euro(report.weatherBonus))}`, 'good'));
   else rewards.push(rewardLine('💶', 'Prime', 'Rien du tout', 'muted'));
   if (report.entryFee > 0) rewards.push(rewardLine('🎟️', 'Inscription', `−${esc(euro(report.entryFee))}`, 'bad'));
   if (report.respect > 0) rewards.push(rewardLine('✊', report.firstWin ? 'Respect' : 'Respect (déjà gagnée)', `+${esc(num(report.respect))}`, 'good'));

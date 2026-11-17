@@ -18,6 +18,16 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
 - **Moteur vivant** : régime moteur simulé (ralenti, inertie, patinage d'embrayage en 1re), boîte
   5 rapports automatique par défaut ou **manuelle** en option (bouton BVA/BVM). Le son du moteur
   suit le vrai régime : il monte dans chaque rapport et retombe à chaque passage.
+- **Départ au régime** : pendant le compte à rebours, l'accélérateur fait monter le régime (jauge à
+  zones). Feu vert dans la zone verte : départ parfait (boost). Trop bas : le moteur cale dans les
+  tours. Trop haut : ça patine jusqu'à ~5 s ; relâcher puis réaccélérer rend le grip aussitôt.
+  Un mauvais départ coûte du temps, jamais le moteur. Les adversaires jouent le même jeu : plus
+  ils sont doués, plus leur départ est précis (les gamins du parking ratent souvent le leur).
+- **Pluie** : certaines courses (tirées au sort, annoncées avant le départ) se courent sous la pluie :
+  moins de grip en virage, freinages plus longs, glissades qui durent, motricité limitée (la nitro
+  fait patiner). Pluie, flaques, gerbes d'eau et chaussée luisante à l'écran. La pluie nivelle :
+  le favori gagne moins souvent, l'outsider a sa chance ; en échange la prime est majorée de 50 %.
+  Les deux premières courses restent au sec.
 - **Prise en main** : des conseils s'affichent pendant les deux premières courses (commandes,
   nitro en ligne droite, relâcher avant le rouge), et le garage indique combien de secondes de
   nitro la voiture encaisse avant la zone rouge.
@@ -46,6 +56,7 @@ aussi bien à la racine d'un domaine que sous `/<repo>/`.
 | Freiner / marche arrière | ↓ ou S | FREIN |
 | Tourner | ← → ou A D (Q D en AZERTY) | ◀ ▶ |
 | Nitro | Espace ou Maj | NITRO |
+| Monter en régime au départ | ↑ ou W pendant le compte à rebours | NITRO pendant le compte à rebours |
 | Monter / descendre un rapport (boîte manuelle) | E / Q (E / A en AZERTY) | + / − |
 | Revenir sur la route | R | — |
 | Pause | Échap ou P | Ⅱ |
@@ -62,25 +73,46 @@ src/race     Course : circuits (splines), simulation déterministe (physique, IA
 src/ui       Menus en DOM : titre, garage, casse, concession, bijouterie, duels, résultats.
 src/infra    Sauvegarde localStorage et sons procéduraux (WebAudio).
 scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts` :
-             `balance` rejoue toutes les courses sans affichage, `keyboard-bot` vérifie qu'un
-             pilotage « tout ou rien » au clavier reste compétitif, `track-info` contrôle la
-             géométrie des circuits.
+             `balance` rejoue toutes les courses sans affichage (une graine), `winrate` mesure
+             le taux de victoire de Ned sur N graines par écart de niveau (`SEEDS=20
+             WEATHER=wet`), `keyboard-bot` vérifie qu'un pilotage « tout ou rien » au clavier
+             reste compétitif, `track-info` contrôle la géométrie des circuits.
 ```
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
-(`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `gearbox=manual` : boîte manuelle,
-`sound=1` : son), pratique pour travailler un circuit ou le rendu.
+(`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `weather=wet` : pluie,
+`gearbox=manual` : boîte manuelle, `sound=1` : son), pratique pour travailler un circuit ou le
+rendu.
 
-### Moteur et boîte de vitesses
+### Moteur, départ et météo
 
 Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
 
 | Bloc | Paramètres principaux |
 | --- | --- |
 | `DRIVETRAIN_TUNING` | ralenti / zone rouge / rupteur (tr/min), étagement `gearSpan`, seuils de passage auto, vitesses de montée du régime, pénalité de sous-régime et bonus de plage de puissance (boîte manuelle) |
+| `LAUNCH_TUNING` | fenêtres de régime au feu vert (`underRevBelow`, `perfect`, `overRevFrom`), boost du départ parfait (×1,3 pendant 1,6 s), calage (×0,55), patinage (×0,5, 2,5 à 5 s), seuils relâché/appuyé |
+| `RIVAL_LAUNCH_TUNING` | erreur de timing des adversaires au départ (±1,8 s × (1 − habileté)), temps de réaction pour rattraper un patinage |
+| `WHEELSPIN_TUNING` | perte de grip latéral quand ça patine, rendement d'un pneu qui patine, léger dandinement |
+| `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, motricité, décalage du seuil de patinage, durée du patinage, multiplicateur de prime (×1,5 sous la pluie) |
+| `FORECAST_TUNING` | probabilité de pluie d'une course de carrière |
 
-Le modèle est pur et testé : `drivetrain.ts` (rapports, régime). En boîte automatique, la
-physique est identique au bit près à celle d'avant : la boîte ne change que le son et l'affichage.
+Les modèles sont purs et testés : `drivetrain.ts` (rapports, régime), `launch.ts` (machine à états
+du départ), `weather.ts` (application de la météo à la fiche de conduite, prévisions déterministes). La météo agit
+sur la `DriveSpec` de chaque voiture : la physique du joueur **et** l'IA (qui planifie ses vitesses
+de virage et de freinage à partir de cette fiche) s'adaptent sans cas particulier. Par temps sec et en boîte
+automatique, la physique est identique au bit près à celle d'avant ces mécaniques ; seul l'effet du
+départ change le résultat d'une course. Le départ de chaque adversaire est tiré d'un flux aléatoire
+propre (dérivé de la graine de la course) : la séquence aléatoire de la course n'est pas décalée.
+
+Réglage de l'équilibre (`scripts/winrate.ts`, 20 graines par course, Ned piloté par l'IA avec une
+habileté de 0,9, départ compris) — victoires sur 400 courses :
+
+| Écart de niveau de Ned | −6 | 0 | +6 |
+| --- | --- | --- | --- |
+| Avant ces mécaniques | 2 | 32 | 227 |
+| Sec | 1 | 38 | 218 |
+| Pluie | 3 | 38 | 138 |
 
 Toutes les marques, modèles et personnages sont inventés. Les illustrations de `public/assets`
 ont été générées pour le projet ; les sons sont synthétisés à la volée.

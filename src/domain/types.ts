@@ -4,6 +4,8 @@
  * whole economy / progression / engine model can be unit-tested and replayed.
  */
 
+import type { Weather } from './tuning';
+
 export type Result<T, E = string> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: E };
@@ -219,6 +221,8 @@ export interface RaceSetup {
   readonly taunt?: string;
   /** Show driving tips during the race (Ned's very first outings). */
   readonly coach?: boolean;
+  /** Track conditions; dry when absent. */
+  readonly weather?: Weather;
 }
 
 export interface RaceStanding {
@@ -243,6 +247,8 @@ export interface RaceOutcome {
   /** Engine condition points lost during the race (overheating). */
   readonly wear: number;
   readonly standings: readonly RaceStanding[];
+  /** Weather the race was run in (absent on old saves/tests: dry). Wet races pay more. */
+  readonly weather?: Weather;
 }
 
 // ───────────────────────── Game state ─────────────────────────

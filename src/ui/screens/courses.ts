@@ -1,13 +1,17 @@
 import {
   activeCar,
+  bossRaceSetup,
   effectiveStats,
   eligibleStakes,
+  eventRaceSetup,
   isBossAvailable,
   isDistrictUnlocked,
   performanceIndex,
   playerRacer,
 } from '../../domain/game';
 import { jewelKind, swagMultiplier } from '../../domain/jewels';
+import type { Weather } from '../../domain/tuning';
+import { weatherProfile } from '../../domain/weather';
 import type { District, GameState, RaceEvent, RivalSpec } from '../../domain/types';
 import { DISTRICTS, districtById, districtIndex } from '../../domain/world';
 import { backdropStyle, button, carCanvas, jewelCard, picture } from '../components';
@@ -203,6 +207,14 @@ function rivalCard(rival: RivalSpec): string {
   return racerCard(rival.name, performanceIndex(rival.stats), carCanvas(look, 'small', 260, 140), rivalNote(rival));
 }
 
+function weatherChip(weather: Weather | undefined): string {
+  const bonus = Math.round((weatherProfile(weather).prizeMultiplier - 1) * 100);
+  const bonusText = bonus > 0 ? ` · prime +${bonus} %` : '';
+  return weather === 'wet'
+    ? `<span class="weather wet" title="Moins de grip : freine plus tôt, dose l’accélérateur. Ça paie plus.">🌧️ Pluie · route glissante${bonusText}</span>`
+    : '<span class="weather dry">☀️ Route sèche</span>';
+}
+
 export function controlsHelp(): string {
   return `
     <div class="controls">
@@ -243,6 +255,7 @@ export function renderPreRace(view: View): string {
             <span>🎟️ ${esc(fee)}</span>
             <span class="prize">💶 ${esc(euro(effectivePrize(game, event)))} au vainqueur</span>
             <span class="difficulty ${level.tone}">${esc(level.label)}</span>
+            ${weatherChip(eventRaceSetup(game, district, event).weather)}
           </div>
         </header>
         <div class="grid-lineup">
@@ -314,6 +327,7 @@ export function renderBoss(view: View): string {
             <p class="stake-prize">+ ${esc(euro(boss.prize * (beaten ? 0.3 : 1) * swagMultiplier(game.jewels)))} · ✊ +${esc(num(beaten ? Math.round(boss.respect * 0.1) : boss.respect))}</p>
           </div>
         </div>
+        <p class="stake-rule">${weatherChip(bossRaceSetup(game, district).weather)}</p>
         <div class="duel-lineup">
           <div class="duel-car">${carCanvas(me.look, 'small', 260, 140)}<span>Ned · indice ${performanceIndex(me.stats)}</span></div>
           <div class="duel-car">${carCanvas({ body: boss.rival.body, paint: boss.rival.paint, neon: boss.rival.neon, spoiler: boss.rival.spoiler }, 'small', 260, 140)}<span>${esc(boss.rival.name)} · indice ${performanceIndex(boss.rival.stats)}</span></div>

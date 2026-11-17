@@ -2,7 +2,7 @@
  * Dev harness (see /race-dev.html): launches a race directly, without the
  * career, to work on tracks, physics and rendering.
  * Query params: track, level (player and rival strength), laps, rivals, auto=1 (AI drives),
- * coach=1 (driving tips), gearbox=manual.
+ * coach=1 (driving tips), weather=wet, gearbox=manual.
  */
 import type { RaceSetup, Racer, Stats, ThemeId } from '../domain/types';
 import { runRace } from './index';
@@ -42,6 +42,7 @@ const setup: RaceSetup = {
   rivals,
   seed: Number(params.get('seed') ?? 42),
   coach: params.get('coach') === '1',
+  weather: params.get('weather') === 'wet' ? 'wet' : 'dry',
 };
 
 const host = document.getElementById('race');

@@ -23,6 +23,7 @@ import {
   type StatKey,
   type Stats,
 } from './types';
+import { forecastWeather, weatherProfile } from './weather';
 import { DISTRICTS, districtIndex } from './world';
 
 const SHOP_SIZE = 8;
@@ -375,6 +376,8 @@ export function canChallengeBoss(state: GameState, district: District): Result<t
 }
 
 export function eventRaceSetup(state: GameState, district: District, event: RaceEvent): RaceSetup {
+  const seed = (state.rngSeed ^ (state.career.races * 7919)) >>> 0;
+  const coach = state.career.races < COACHED_RACES;
   return {
     title: event.name,
     trackId: district.trackId,
@@ -382,13 +385,16 @@ export function eventRaceSetup(state: GameState, district: District, event: Race
     laps: event.laps,
     player: playerRacer(state),
     rivals: event.rivals.map(rivalToRacer),
-    seed: (state.rngSeed ^ (state.career.races * 7919)) >>> 0,
-    coach: state.career.races < COACHED_RACES,
+    seed,
+    coach,
+    // Ned learns the controls on a dry road; after that the sky decides.
+    weather: coach ? 'dry' : forecastWeather(seed),
   };
 }
 
 export function bossRaceSetup(state: GameState, district: District): RaceSetup {
   const boss = district.boss;
+  const seed = (state.rngSeed ^ (state.career.races * 104729)) >>> 0;
   return {
     title: `Duel : ${boss.name}`,
     trackId: district.trackId,
@@ -396,12 +402,20 @@ export function bossRaceSetup(state: GameState, district: District): RaceSetup {
     laps: boss.laps,
     player: playerRacer(state),
     rivals: [rivalToRacer(boss.rival)],
-    seed: (state.rngSeed ^ (state.career.races * 104729)) >>> 0,
+    seed,
     taunt: boss.intro[boss.intro.length - 1] ?? '',
+    weather: forecastWeather(seed),
   };
 }
 
 const PRIZE_SHARE_BY_POSITION: readonly number[] = [1, 0.35, 0.1];
+
+/** Splits a prize into its dry-weather base and the rain bonus on top. */
+function withWeatherBonus(basePrize: number, outcome: RaceOutcome): { prize: number; weatherBonus: number } {
+  const base = Math.round(basePrize);
+  const weatherBonus = Math.round(base * (weatherProfile(outcome.weather).prizeMultiplier - 1));
+  return { prize: base + weatherBonus, weatherBonus };
+}
 
 export interface RaceReport {
   readonly kind: 'event' | 'boss';
@@ -411,7 +425,10 @@ export interface RaceReport {
   readonly exploded: boolean;
   readonly abandoned: boolean;
   readonly entryFee: number;
+  /** Total prize, rain bonus included. */
   readonly prize: number;
+  /** Part of `prize` earned for racing in the wet (set only when non-zero). */
+  readonly weatherBonus?: number;
   readonly respect: number;
   readonly loot?: Part;
   readonly conditionBefore: number;
@@ -443,7 +460,7 @@ export function applyEventOutcome(
 
   const share = classified ? (PRIZE_SHARE_BY_POSITION[outcome.position - 1] ?? 0) : 0;
   const repeatFactor = previousWins > 0 ? 0.6 : 1;
-  const prize = Math.round(event.prize * share * repeatFactor * swagMultiplier(state.jewels));
+  const { prize, weatherBonus } = withWeatherBonus(event.prize * share * repeatFactor * swagMultiplier(state.jewels), outcome);
   const respect = won ? (firstWin ? event.respect : Math.max(1, Math.round(event.respect * 0.2))) : 0;
 
   const rng = createRng(state.rngSeed);
@@ -480,6 +497,7 @@ export function applyEventOutcome(
     abandoned: outcome.abandoned,
     entryFee: event.entryFee,
     prize,
+    ...(weatherBonus > 0 ? { weatherBonus } : {}),
     respect,
     conditionBefore: car.condition,
     conditionAfter,
@@ -519,9 +537,10 @@ export function applyBossOutcome(
     jewels = jewels.filter((j) => j.uid !== stakeUid);
   }
 
-  const prize = won
-    ? Math.round(boss.prize * (firstWin ? 1 : 0.3) * swagMultiplier(state.jewels))
-    : 0;
+  const { prize, weatherBonus } = withWeatherBonus(
+    won ? boss.prize * (firstWin ? 1 : 0.3) * swagMultiplier(state.jewels) : 0,
+    outcome,
+  );
   const respect = won ? (firstWin ? boss.respect : Math.round(boss.respect * 0.1)) : 0;
 
   let next: GameState = {
@@ -550,6 +569,7 @@ export function applyBossOutcome(
     abandoned: outcome.abandoned,
     entryFee: 0,
     prize,
+    ...(weatherBonus > 0 ? { weatherBonus } : {}),
     respect,
     conditionBefore: car.condition,
     conditionAfter,

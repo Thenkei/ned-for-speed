@@ -13,7 +13,7 @@ import {
 } from '../src/race/sim';
 
 /**
- * Integration of the drivetrain with the race simulation. Ned is steered by the autopilot so that only the pedals under
+ * Integration of the drivetrain and the weather with the race simulation. Ned is steered by the autopilot so that only the pedals under
  * test differ between runs.
  */
 
@@ -128,10 +128,68 @@ describe('transmission in the race', () => {
   });
 });
 
-describe('determinism', () => {
-  it('stays deterministic with gears', () => {
+describe('wet weather in the race', () => {
+  it('takes longer to stop from the same speed', () => {
+    const BRAKE_FROM = 280;
+    const stopping = (weather: 'dry' | 'wet'): number => {
+      const sim = createRaceSim(setup({ weather }, 4, 0, 50));
+      countdown(sim);
+      const pilot = createAutopilot(sim);
+      for (let i = 0; i < 120 * 10 && sim.player.speed < BRAKE_FROM; i++) {
+        stepRaceSim(sim, { ...pilot(sim.player, DT), throttle: 1, brake: 0, nitro: false }, DT);
+      }
+      expect(sim.player.speed).toBeGreaterThanOrEqual(BRAKE_FROM);
+      expect(sim.player.speed).toBeLessThan(BRAKE_FROM + 5);
+      const from = sim.player.progress;
+      for (let i = 0; i < 120 * 4 && sim.player.speed > 5; i++) {
+        stepRaceSim(sim, { ...pilot(sim.player, DT), throttle: 0, brake: 1, nitro: false }, DT);
+      }
+      return sim.player.progress - from;
+    };
+    expect(stopping('wet')).toBeGreaterThan(stopping('dry') * 1.15);
+  });
+
+  it('spins the wheels under nitro where the dry road holds', () => {
+    const peakSpin = (weather: 'dry' | 'wet'): number => {
+      const sim = createRaceSim(setup({ weather, player: { ...ned(70), stats: { ...ned(70).stats, nitro: 90 } } }));
+      countdown(sim);
+      const pilot = createAutopilot(sim);
+      let peak = 0;
+      for (let t = 0; t < 3; t += DT) {
+        stepRaceSim(sim, { ...pilot(sim.player, DT), throttle: 1, nitro: true }, DT);
+        sim.events.length = 0;
+        peak = Math.max(peak, sim.player.wheelspin);
+      }
+      return peak;
+    };
+    expect(peakSpin('dry')).toBe(0);
+    expect(peakSpin('wet')).toBeGreaterThan(0.3);
+  });
+
+  it('is slower for the same driver, and every rival still finishes on every track', () => {
+    for (let d = 0; d < DISTRICTS.length; d++) {
+      const district = DISTRICTS[d]!;
+      const sim = createRaceSim(setup({ weather: 'wet' }, d, district.events.length - 1, 20));
+      for (let i = 0; i < 120 * 500 && sim.phase !== 'finished'; i++) {
+        stepRaceSim(sim, { throttle: 0, brake: 0, steer: 0, nitro: false }, DT);
+      }
+      for (const rival of sim.cars.filter((c) => !c.isPlayer)) {
+        if (!rival.engine.exploded) expect(rival.finished, `${district.id}/${rival.racer.name}`).toBe(true);
+      }
+    }
+
+    const lap = (weather: 'dry' | 'wet'): number => {
+      const sim = createRaceSim(setup({ weather, rivals: [] }, 0, 0, 45));
+      const pilot = createAutopilot(sim);
+      for (let i = 0; i < 120 * 200 && sim.phase !== 'finished'; i++) stepRaceSim(sim, pilot(sim.player, DT), DT);
+      return raceOutcome(sim, false).time;
+    };
+    expect(lap('wet')).toBeGreaterThan(lap('dry') * 1.03);
+  }, 60_000);
+
+  it('stays deterministic with gears and rain', () => {
     const run = (): string => {
-      const sim = createRaceSim(setup(), { playerTransmission: 'manual' });
+      const sim = createRaceSim(setup({ weather: 'wet' }), { playerTransmission: 'manual' });
       countdown(sim);
       drive(sim, 8, (t) => (t > 1 && t < 1.05 ? 0 : 1));
       return sim.cars.map((c) => `${c.x.toFixed(4)},${c.y.toFixed(4)},${c.drivetrain.rpm.toFixed(2)}`).join('|');

@@ -1,7 +1,7 @@
 /**
- * Every tunable of the drivetrain, in one place. The pure model
- * (`drivetrain.ts`) takes these as defaults and accepts overrides, which is
- * how the tests pin them.
+ * Every tunable of the drivetrain and the weather, in one place. The pure
+ * models (`drivetrain.ts`, `weather.ts`) take these as defaults and accept
+ * overrides, which is how the tests pin them.
  *
  * Units follow the rest of the simulation: pixels, seconds, revolutions per
  * minute. "Norm" values are fractions of the redline RPM.
@@ -73,3 +73,73 @@ export const DRIVETRAIN_TUNING: DrivetrainTuning = {
   limiterFade: 0.03,
 };
 
+// ───────────────────────── Wheelspin (traction) ─────────────────────────
+
+export interface WheelspinTuning {
+  /** Share of lateral grip lost at full wheelspin (0 = none, 1 = ice). */
+  readonly gripLoss: number;
+  /** Share of the traction limit a spinning tyre still delivers. */
+  readonly spinningTractionEfficiency: number;
+  /** Small deterministic fishtail at full wheelspin (rad/s of yaw). */
+  readonly fishtailYaw: number;
+  readonly fishtailHz: number;
+}
+
+export const WHEELSPIN_TUNING: WheelspinTuning = {
+  gripLoss: 0.4,
+  spinningTractionEfficiency: 0.8,
+  fishtailYaw: 0.14,
+  fishtailHz: 1.3,
+};
+
+// ───────────────────────── Weather ─────────────────────────
+
+export type Weather = 'dry' | 'wet';
+
+export interface WeatherProfile {
+  readonly id: Weather;
+  readonly label: string;
+  /** Cornering grip (yaw cap, AI corner speeds). */
+  readonly gripMultiplier: number;
+  /** Braking deceleration: 0.7 means ~43 % longer stopping distances. */
+  readonly brakeMultiplier: number;
+  /** How fast a slide is caught: lower means slides last longer. */
+  readonly slipRecoveryMultiplier: number;
+  /** Longitudinal traction limit as a share of the cornering grip (Infinity = never limited). */
+  readonly tractionShareOfGrip: number;
+  /** Risk–reward: multiplier on the prize money of a race run in this weather. */
+  readonly prizeMultiplier: number;
+}
+
+export const WEATHER_PROFILES: Readonly<Record<Weather, WeatherProfile>> = {
+  // Dry is the legacy behaviour: every multiplier is neutral and traction is unlimited.
+  dry: {
+    id: 'dry',
+    label: 'Sec',
+    gripMultiplier: 1,
+    brakeMultiplier: 1,
+    slipRecoveryMultiplier: 1,
+    tractionShareOfGrip: Number.POSITIVE_INFINITY,
+    prizeMultiplier: 1,
+  },
+  // Rain is a leveller: a favourite wins less often and an underdog more. The
+  // 1.5× prize pays for the risk, and makes rain the underdog's chance.
+  wet: {
+    id: 'wet',
+    label: 'Pluie',
+    gripMultiplier: 0.82,
+    brakeMultiplier: 0.7,
+    slipRecoveryMultiplier: 0.7,
+    tractionShareOfGrip: 0.36,
+    prizeMultiplier: 1.5,
+  },
+};
+
+export interface ForecastTuning {
+  /** Chance that a career race is run in the wet. */
+  readonly rainChance: number;
+}
+
+export const FORECAST_TUNING: ForecastTuning = {
+  rainChance: 0.3,
+};

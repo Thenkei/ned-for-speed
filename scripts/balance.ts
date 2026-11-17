@@ -1,7 +1,11 @@
 /**
  * Balancing aid: runs every event headlessly with the player's car driven by
- * the rival AI, and prints who wins. Usage: npx vite-node scripts/balance.ts
+ * the rival AI, and prints who wins.
+ * Usage: [WEATHER=wet] npx vite-node scripts/balance.ts
  */
+// Run under Node (vite-node); the project ships no @types/node.
+declare const process: { readonly env: Readonly<Record<string, string | undefined>> };
+
 import { DISTRICTS } from '../src/domain/world';
 import type { RaceSetup, Racer, RivalSpec, Stats } from '../src/domain/types';
 import { createAutopilot, createRaceSim, rankCars, stepRaceSim } from '../src/race/sim';
@@ -16,7 +20,7 @@ const toRacer = (r: RivalSpec): Racer => ({
 });
 
 function run(setup: RaceSetup, useNitro: boolean): string {
-  const sim = createRaceSim(setup);
+  const sim = createRaceSim({ ...setup, weather: process.env.WEATHER === 'wet' ? 'wet' : 'dry' });
   const pilot = createAutopilot(sim);
   const dt = 1 / 120;
   let guard = 0;

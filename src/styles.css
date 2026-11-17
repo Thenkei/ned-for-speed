@@ -1166,6 +1166,12 @@ kbd {
 .difficulty.insane {
   color: var(--red);
 }
+.weather {
+  white-space: nowrap;
+}
+.weather.wet {
+  color: var(--cyan);
+}
 
 .boss-card {
   display: grid;

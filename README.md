@@ -18,6 +18,11 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
 - **Moteur vivant** : régime moteur simulé (ralenti, inertie, patinage d'embrayage en 1re), boîte
   5 rapports automatique par défaut ou **manuelle** en option (bouton BVA/BVM). Le son du moteur
   suit le vrai régime : il monte dans chaque rapport et retombe à chaque passage.
+- **Pluie** : certaines courses (tirées au sort, annoncées avant le départ) se courent sous la pluie :
+  moins de grip en virage, freinages plus longs, glissades qui durent, motricité limitée (la nitro
+  fait patiner). Pluie, flaques, gerbes d'eau et chaussée luisante à l'écran. La pluie nivelle :
+  le favori gagne moins souvent, l'outsider a sa chance ; en échange la prime est majorée de 50 %.
+  Les deux premières courses restent au sec.
 - **Prise en main** : des conseils s'affichent pendant les deux premières courses (commandes,
   nitro en ligne droite, relâcher avant le rouge), et le garage indique combien de secondes de
   nitro la voiture encaisse avant la zone rouge.
@@ -62,25 +67,32 @@ src/race     Course : circuits (splines), simulation déterministe (physique, IA
 src/ui       Menus en DOM : titre, garage, casse, concession, bijouterie, duels, résultats.
 src/infra    Sauvegarde localStorage et sons procéduraux (WebAudio).
 scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts` :
-             `balance` rejoue toutes les courses sans affichage, `keyboard-bot` vérifie qu'un
-             pilotage « tout ou rien » au clavier reste compétitif, `track-info` contrôle la
-             géométrie des circuits.
+             `balance` rejoue toutes les courses sans affichage (`WEATHER=wet` : sous la
+             pluie), `keyboard-bot` vérifie qu'un pilotage « tout ou rien » au clavier reste
+             compétitif, `track-info` contrôle la géométrie des circuits.
 ```
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
-(`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `gearbox=manual` : boîte manuelle,
-`sound=1` : son), pratique pour travailler un circuit ou le rendu.
+(`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `weather=wet` : pluie,
+`gearbox=manual` : boîte manuelle, `sound=1` : son), pratique pour travailler un circuit ou le
+rendu.
 
-### Moteur et boîte de vitesses
+### Moteur et météo
 
 Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
 
 | Bloc | Paramètres principaux |
 | --- | --- |
 | `DRIVETRAIN_TUNING` | ralenti / zone rouge / rupteur (tr/min), étagement `gearSpan`, seuils de passage auto, vitesses de montée du régime, pénalité de sous-régime et bonus de plage de puissance (boîte manuelle) |
+| `WHEELSPIN_TUNING` | perte de grip latéral quand ça patine, rendement d'un pneu qui patine, léger dandinement |
+| `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, motricité, multiplicateur de prime (×1,5 sous la pluie) |
+| `FORECAST_TUNING` | probabilité de pluie d'une course de carrière |
 
-Le modèle est pur et testé : `drivetrain.ts` (rapports, régime). En boîte automatique, la
-physique est identique au bit près à celle d'avant : la boîte ne change que le son et l'affichage.
+Les modèles sont purs et testés : `drivetrain.ts` (rapports, régime), `weather.ts` (application
+de la météo à la fiche de conduite, prévisions déterministes). La météo agit sur la `DriveSpec` de
+chaque voiture : la physique du joueur **et** l'IA (qui planifie ses vitesses de virage et de
+freinage à partir de cette fiche) s'adaptent sans cas particulier. Par temps sec et en boîte
+automatique, la physique est identique au bit près à celle d'avant ces mécaniques.
 
 Toutes les marques, modèles et personnages sont inventés. Les illustrations de `public/assets`
 ont été générées pour le projet ; les sons sont synthétisés à la volée.

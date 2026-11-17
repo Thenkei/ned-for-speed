@@ -228,6 +228,10 @@ export function controlsHelp(): string {
         <li><kbd>E</kbd> / <kbd>Q</kbd> <span>Monter / descendre un rapport (boîte manuelle)</span></li>
         <li><kbd>Échap</kbd> <span>Pause</span></li>
       </ul>
+      <p class="launch-tip">
+        🚦 Départ&nbsp;: monte en régime pendant le compte à rebours et vise la zone verte au feu vert.
+        Trop tôt, ça patine (relâche et réaccélère pour reprendre le grip)&nbsp;; trop tard, le moteur cale.
+      </p>
       <p class="nitro-warning">
         🔥 Le nitro fait grimper la température. Dans la zone rouge, chaque seconde est un coup de dés&nbsp;:
         le moteur peut <strong>exploser</strong>. Relâche, laisse refroidir, recommence.

@@ -1,5 +1,7 @@
 import { KMH_PER_PX_S, MAX_HEAT } from '../domain/engine';
+import { overRevThreshold } from '../domain/launch';
 import { createRng } from '../domain/rng';
+import { LAUNCH_TUNING } from '../domain/tuning';
 import { BODY_SHAPES, drawCar, rgba } from './carSprite';
 import { buildScenery, createSpeckPattern, drawSceneryItem, type Scenery } from './scenery';
 import { playerPosition, rankCars, type CarSim, type RaceSim } from './sim';
@@ -238,6 +240,28 @@ export class RaceRenderer {
       });
     }
     if (car.isPlayer) this.addShake(1.2);
+  }
+
+  /** Short blue flame burst behind the car: the perfect start. */
+  boostFlash(car: CarSim): void {
+    const cos = Math.cos(car.heading);
+    const sin = Math.sin(car.heading);
+    for (let i = 0; i < 22; i++) {
+      const spread = (Math.random() - 0.5) * 0.9;
+      const speed = 80 + Math.random() * 160;
+      this.spawn({
+        kind: 'spark',
+        x: car.x - cos * 22,
+        y: car.y - sin * 22,
+        vx: -Math.cos(car.heading + spread) * speed,
+        vy: -Math.sin(car.heading + spread) * speed,
+        life: 0,
+        maxLife: 0.3 + Math.random() * 0.35,
+        size: 3,
+        color: i % 2 === 0 ? '#2ff3ff' : '#9ae8ff',
+      });
+    }
+    if (car.isPlayer) this.addShake(0.35);
   }
 
   sparks(car: CarSim, strength: number): void {
@@ -596,7 +620,7 @@ export class RaceRenderer {
       ctx.rotate(car.heading);
       drawCar(ctx, car.racer.look, {
         braking: car.controls.brake,
-        nitro: car.engine.nitroActive,
+        nitro: car.engine.nitroActive || car.launch?.phase === 'boost',
         steer: car.steer * 0.45,
         headlights: true,
         time: this.clock + car.id,
@@ -931,6 +955,42 @@ export class RaceRenderer {
     }
   }
 
+  /**
+   * Countdown rev gauge: where the needle sits relative to the start windows.
+   * Zones come straight from the tuning, so the gauge never lies about them.
+   */
+  private drawLaunchMeter(cx: number, y: number, scale: number): void {
+    const { ctx, sim } = this;
+    const player = sim.player;
+    const { tuning } = player.gearbox;
+    const maxNorm = tuning.limiterRpm / tuning.redlineRpm;
+    const width = Math.min(this.width - 40, 340 * scale);
+    const height = 16 * scale;
+    const left = cx - width / 2;
+    const at = (norm: number): number => left + (clamp(norm, 0, maxNorm) / maxNorm) * width;
+    const overFrom = overRevThreshold(sim.weather);
+    const [perfectLow, perfectHigh] = LAUNCH_TUNING.perfect;
+
+    ctx.fillStyle = 'rgba(10,8,26,0.78)';
+    ctx.fillRect(left - 4, y - 4, width + 8, height + 8);
+    const zones: readonly [number, number, string][] = [
+      [0, LAUNCH_TUNING.underRevBelow, 'rgba(120,140,220,0.45)'],
+      [LAUNCH_TUNING.underRevBelow, overFrom, 'rgba(255,210,63,0.45)'],
+      [perfectLow, perfectHigh, 'rgba(77,255,106,0.85)'],
+      [overFrom, maxNorm, 'rgba(255,60,60,0.75)'],
+    ];
+    for (const [from, to, color] of zones) {
+      ctx.fillStyle = color;
+      ctx.fillRect(at(from), y, at(to) - at(from), height);
+    }
+    const norm = player.drivetrain.rpm / tuning.redlineRpm;
+    const needle = at(norm);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(needle - 2, y - 7 * scale, 4, height + 14 * scale);
+    this.text('RÉGIME', cx, y - 10 * scale, 13 * scale, '#b9b4d6', 'center', 700);
+    this.text(`${Math.round(player.drivetrain.rpm / 100) * 100} tr/min`, cx, y + height + 22 * scale, 15 * scale, '#ffffff', 'center', 700);
+  }
+
   private drawMessages(scale: number): void {
     const { sim } = this;
     const player = sim.player;
@@ -946,6 +1006,13 @@ export class RaceRenderer {
         this.text(sim.setup.title.toUpperCase(), cx, top, 40 * scale, '#ffffff', 'center');
       }
       if (sim.setup.taunt) this.text(`« ${sim.setup.taunt} »`, cx, this.height * 0.74, 19 * scale, '#ffd23f', 'center', 700);
+      this.drawLaunchMeter(cx, top + 92 * scale, scale);
+      return;
+    }
+
+    // Lingering wheelspin, once its banner is gone.
+    if (!this.banner && player.launch?.phase === 'wheelspin' && player.controls.throttle > 0) {
+      if (Math.sin(this.clock * 12) > -0.2) this.text('PATINAGE', cx, top, 34 * scale, '#ff9a2f', 'center');
       return;
     }
 

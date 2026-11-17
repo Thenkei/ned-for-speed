@@ -12,11 +12,27 @@ import {
   gearboxSpecFrom,
   gearDriveFactor,
   initialDrivetrainState,
+  rpmNorm,
   stepDrivetrain,
   type DrivetrainState,
   type GearboxSpec,
   type ShiftRequest,
 } from '../domain/drivetrain';
+import {
+  gridThrottle,
+  launchAccelMultiplier,
+  launchRpmRiseCap,
+  launchWheelspin,
+  perfectLaunchPlan,
+  rivalLaunchPlan,
+  shouldLiftForGrip,
+  startLaunch,
+  stepLaunch,
+  type LaunchEnd,
+  type LaunchGrade,
+  type LaunchPlan,
+  type LaunchState,
+} from '../domain/launch';
 import { createRng, type Rng } from '../domain/rng';
 import { WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
 import { applyWeather, weatherProfile } from '../domain/weather';
@@ -49,6 +65,8 @@ export type SimEvent =
   | { readonly type: 'finish'; readonly carId: number }
   | { readonly type: 'countdown'; readonly value: number }
   | { readonly type: 'go' }
+  | { readonly type: 'launch'; readonly carId: number; readonly grade: LaunchGrade }
+  | { readonly type: 'launch-end'; readonly carId: number; readonly grade: LaunchGrade; readonly endedBy: LaunchEnd }
   | { readonly type: 'shift'; readonly carId: number; readonly gear: number; readonly direction: ShiftRequest };
 
 interface AiState {
@@ -56,6 +74,8 @@ interface AiState {
   laneTimer: number;
   spraying: boolean;
   stuckTime: number;
+  /** How this driver plays the race start. */
+  readonly launch: LaunchPlan;
 }
 
 export interface CarSim {
@@ -67,7 +87,9 @@ export interface CarSim {
   engine: EngineState;
   readonly gearbox: GearboxSpec;
   drivetrain: DrivetrainState;
-  /** 0–1: how hard the driven wheels spin (more power than the road takes). */
+  /** Race-start effect, for every car (rivals time their start from their skill). */
+  launch: LaunchState | undefined;
+  /** 0–1: how hard the driven wheels spin (bad launch, or more power than the road takes). */
   wheelspin: number;
   x: number;
   y: number;
@@ -147,6 +169,7 @@ function createCar(
   rng: Rng,
   weather: WeatherProfile,
   transmission: TransmissionMode,
+  launchRoll: number,
 ): CarSim {
   const engineSpec = engineSpecFrom(racer.stats, racer.condition);
   const drive = applyWeather(driveSpecFrom(racer.stats, racer.condition), weather);
@@ -168,6 +191,7 @@ function createCar(
     engine: initialEngineState(engineSpec),
     gearbox,
     drivetrain: initialDrivetrainState(transmission, gearbox),
+    launch: undefined,
     wheelspin: 0,
     x: sample.x + sample.nx * lateral,
     y: sample.y + sample.ny * lateral,
@@ -192,7 +216,13 @@ function createCar(
     onPavement: false,
     ai: isPlayer
       ? undefined
-      : { lane: lateral, laneTimer: rng.range(1.5, 4), spraying: false, stuckTime: 0 },
+      : {
+          lane: lateral,
+          laneTimer: rng.range(1.5, 4),
+          spraying: false,
+          stuckTime: 0,
+          launch: rivalLaunchPlan(racer.skill, launchRoll),
+        },
   };
 }
 
@@ -201,8 +231,12 @@ export function createRaceSim(setup: RaceSetup, options: SimOptions = {}): RaceS
   const rng = createRng(setup.seed);
   const weather = weatherProfile(setup.weather);
   const cars: CarSim[] = [];
-  setup.rivals.forEach((racer, index) => cars.push(createCar(index, racer, false, track, index, rng, weather, 'auto')));
-  const player = createCar(cars.length, setup.player, true, track, cars.length, rng, weather, options.playerTransmission ?? 'auto');
+  setup.rivals.forEach((racer, index) =>
+    cars.push(createCar(index, racer, false, track, index, rng, weather, 'auto', launchRoll(setup.seed, index))),
+  );
+  const player = createCar(
+    cars.length, setup.player, true, track, cars.length, rng, weather, options.playerTransmission ?? 'auto', 0.5,
+  );
   cars.push(player);
   return {
     setup,
@@ -220,9 +254,29 @@ export function createRaceSim(setup: RaceSetup, options: SimOptions = {}): RaceS
   };
 }
 
+/**
+ * Each rival's start is drawn from its own stream, derived from the race seed:
+ * the shared race RNG (lane changes, engine rolls) keeps its exact sequence.
+ */
+function launchRoll(seed: number, carIndex: number): number {
+  return createRng((seed ^ Math.imul(carIndex + 1, 0x9e3779b1)) >>> 0).next();
+}
+
 // ───────────────────────── AI ─────────────────────────
 
 function aiControls(sim: RaceSim, car: CarSim, ai: AiState, dt: number): Controls {
+  const controls = aiDriving(sim, car, ai, dt);
+  // On the grid only the throttle matters. The driving logic above still runs
+  // so the AI state (and its RNG draws) evolve exactly as they always did.
+  if (sim.phase === 'countdown') {
+    return { ...controls, throttle: gridThrottle(ai.launch, sim.countdown), brake: 0, nitro: false };
+  }
+  // Wheels spinning off the line: lift for a step, which cancels it.
+  if (shouldLiftForGrip(ai.launch, car.launch)) return { ...controls, throttle: 0, nitro: false };
+  return controls;
+}
+
+function aiDriving(sim: RaceSim, car: CarSim, ai: AiState, dt: number): Controls {
   const { track } = sim;
   const { drive } = car;
   const racer = car.racer;
@@ -308,8 +362,9 @@ function aiControls(sim: RaceSim, car: CarSim, ai: AiState, dt: number): Control
  * Drives any car with the rival AI. Used by tests and balancing scripts to
  * estimate what a competent driver gets out of a given car.
  */
-export function createAutopilot(sim: RaceSim): (car: CarSim, dt: number) => Controls {
-  const state: AiState = { lane: 0, laneTimer: 3, spraying: false, stuckTime: 0 };
+/** The rival AI driving Ned (debug key, balance script). Launches perfectly unless told otherwise. */
+export function createAutopilot(sim: RaceSim, launch: LaunchPlan = perfectLaunchPlan()): (car: CarSim, dt: number) => Controls {
+  const state: AiState = { lane: 0, laneTimer: 3, spraying: false, stuckTime: 0, launch };
   return (car, dt) => aiControls(sim, car, state, dt);
 }
 
@@ -367,6 +422,7 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
     const ratio = clamp(forward / topSpeed, 0, 1);
     let push = drive.accel * (spraying ? car.engineSpec.nitroAccelBoost : 1) * throttle * (1 - ratio * ratio);
     push *= gearDriveFactor(car.gearbox, car.drivetrain, forward);
+    if (car.launch) push *= launchAccelMultiplier(car.launch);
     // Traction limit (wet road): past it the tyres spin and deliver less, not more.
     if (push > drive.traction) {
       tractionSpin = clamp(0.35 + (push - drive.traction) / drive.traction, 0, 1);
@@ -408,8 +464,9 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   car.slip = Math.abs(lateral);
   if (forward * KMH_PER_PX_S > car.topSpeed) car.topSpeed = forward * KMH_PER_PX_S;
 
-  // Engine speed and gears.
-  car.wheelspin = dead ? 0 : tractionSpin;
+  // Engine speed, gears and the race-start effect.
+  const launchSpin = car.launch && throttle > 0 ? launchWheelspin(car.launch) : 0;
+  car.wheelspin = dead ? 0 : Math.max(launchSpin, tractionSpin);
   car.drivetrain = stepDrivetrain(
     car.drivetrain,
     car.gearbox,
@@ -419,11 +476,18 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
       clutchIn: false,
       shift: input.shift ?? 0,
       wheelspin: car.wheelspin,
+      maxRise: launchRpmRiseCap(car.launch),
     },
     dt,
   );
   if (car.drivetrain.shifted !== 0 && car.isPlayer) {
     sim.events.push({ type: 'shift', carId: car.id, gear: car.drivetrain.gear, direction: car.drivetrain.shifted });
+  }
+  if (car.launch && car.launch.phase !== 'done') {
+    car.launch = stepLaunch(car.launch, { throttle, rpmNorm: rpmNorm(car.gearbox, car.drivetrain.rpm) }, dt);
+    if (car.launch.phase === 'done' && car.launch.endedBy) {
+      sim.events.push({ type: 'launch-end', carId: car.id, grade: car.launch.grade, endedBy: car.launch.endedBy });
+    }
   }
 
   // Track bookkeeping.
@@ -548,9 +612,12 @@ export function stepRaceSim(sim: RaceSim, playerInput: Controls, dt: number): vo
     sim.countdown -= dt;
     const after = Math.ceil(sim.countdown - 0.6);
     if (after !== before && after >= 1 && after <= 3) sim.events.push({ type: 'countdown', value: after });
-    // Clutch in on the grid: Ned can rev the engine (rivals idle).
+    // Clutch in on the grid: everyone revs for the start. Rivals only touch
+    // the throttle here (no driving logic, so the race RNG is not drawn).
     for (const car of sim.cars) {
-      const controls = car.isPlayer ? { ...playerInput, brake: 0, steer: 0, nitro: false } : NEUTRAL;
+      const controls = car.ai
+        ? { ...NEUTRAL, throttle: gridThrottle(car.ai.launch, sim.countdown) }
+        : { ...playerInput, brake: 0, steer: 0, nitro: false };
       car.controls = controls;
       car.drivetrain = stepDrivetrain(
         car.drivetrain,
@@ -562,6 +629,10 @@ export function stepRaceSim(sim: RaceSim, playerInput: Controls, dt: number): vo
     if (sim.countdown <= 0) {
       sim.phase = 'racing';
       sim.events.push({ type: 'go' });
+      for (const car of sim.cars) {
+        car.launch = startLaunch(rpmNorm(car.gearbox, car.drivetrain.rpm), clamp(car.controls.throttle, 0, 1), sim.weather);
+        sim.events.push({ type: 'launch', carId: car.id, grade: car.launch.grade });
+      }
     }
     return;
   }

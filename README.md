@@ -17,7 +17,14 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
   « Grands noms » montre qui respecte déjà Ned, qui le snobe encore, et ce qu'il reste à faire.
 - **Moteur vivant** : régime moteur simulé (ralenti, inertie, patinage d'embrayage en 1re), boîte
   5 rapports automatique par défaut ou **manuelle** en option (bouton BVA/BVM). Le son du moteur
-  suit le vrai régime : il monte dans chaque rapport et retombe à chaque passage.
+  est synthétisé à partir du régime et de la charge : ralenti irrégulier, montée en tours qui
+  grogne sous la charge, admission, rupteur, coupure d'allumage aux passages de rapport,
+  pétarades au lever de pied. Chaque voiture a son moteur : 4 cylindres fatigué de la Biquette,
+  4 pattes rageur du Furet, 16 soupapes de la Cobra (la distribution variable qui « accroche » en
+  haut), 6 en ligne turbo de la Sakura, V6 turbo glougloutant du Bulldozer (sifflement et
+  dump valve qui crachote), V10 hurlant de la Mistral. Les pneus hurlent quand ça patine (bien
+  distinct du moteur) et crissent plus bas en glisse ; les moteurs des adversaires (chacun avec
+  sa voix) s'entendent, à gauche ou à droite, avec l'effet Doppler quand ils passent.
 - **Départ au régime** : pendant le compte à rebours, l'accélérateur fait monter le régime (jauge à
   zones). Feu vert dans la zone verte : départ parfait (boost). Trop bas : le moteur cale dans les
   tours. Trop haut : ça patine jusqu'à ~5 s ; relâcher puis réaccélérer rend le grip aussitôt.
@@ -81,8 +88,8 @@ scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts`
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
 (`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `weather=wet` : pluie,
-`gearbox=manual` : boîte manuelle, `sound=1` : son), pratique pour travailler un circuit ou le
-rendu.
+`gearbox=manual` : boîte manuelle, `sound=1` : son, `body=muscle` : carrosserie et moteur),
+pratique pour travailler un circuit ou le rendu.
 
 ### Moteur, départ et météo
 
@@ -96,11 +103,14 @@ Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
 | `WHEELSPIN_TUNING` | perte de grip latéral quand ça patine, rendement d'un pneu qui patine, léger dandinement |
 | `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, motricité, décalage du seuil de patinage, durée du patinage, multiplicateur de prime (×1,5 sous la pluie) |
 | `FORECAST_TUNING` | probabilité de pluie d'une course de carrière |
+| `ENGINE_SOUND_PROFILES` (`src/infra/engineProfiles.ts`) | la voix de chaque carrosserie : nombre de cylindres (hauteur = tr/min × cylindres / 120), harmoniques, glouglou, brillance, grain, pétarades, résonances d'échappement, distribution variable, turbo (sifflement, temps de réponse, dump valve) |
+| `TYRE_SOUND`, `RIVAL_SOUND` (`src/infra/engineSound.ts`) | seuils, niveaux et hauteurs du crissement des pneus ; portée, atténuation et Doppler des moteurs adverses |
 
 Les modèles sont purs et testés : `drivetrain.ts` (rapports, régime), `launch.ts` (machine à états
-du départ), `weather.ts` (application de la météo à la fiche de conduite, prévisions déterministes). La météo agit
-sur la `DriveSpec` de chaque voiture : la physique du joueur **et** l'IA (qui planifie ses vitesses
-de virage et de freinage à partir de cette fiche) s'adaptent sans cas particulier. Par temps sec et en boîte
+du départ), `weather.ts` (application de la météo à la fiche de conduite, prévisions déterministes),
+`src/infra/engineSound.ts` (régime, patinage, glisse → paramètres de synthèse). La météo agit sur
+la `DriveSpec` de chaque voiture : la physique du joueur **et** l'IA (qui planifie ses vitesses de
+virage et de freinage à partir de cette fiche) s'adaptent sans cas particulier. Par temps sec et en boîte
 automatique, la physique est identique au bit près à celle d'avant ces mécaniques ; seul l'effet du
 départ change le résultat d'une course. Le départ de chaque adversaire est tiré d'un flux aléatoire
 propre (dérivé de la graine de la course) : la séquence aléatoire de la course n'est pas décalée.

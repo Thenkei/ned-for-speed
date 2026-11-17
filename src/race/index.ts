@@ -4,6 +4,8 @@ import type { LaunchEnd, LaunchGrade } from '../domain/launch';
 import type { TransmissionMode } from '../domain/tuning';
 import type { RaceOutcome, RaceSetup } from '../domain/types';
 import { audio } from '../infra/audio';
+import { engineProfileFor, IDLE_TURBO, stepTurbo, type TurboState } from '../infra/engineProfiles';
+import { engineSoundParams, rivalSoundParams } from '../infra/engineSound';
 import { createRaceInput } from './input';
 import { RaceRenderer, formatTime } from './render';
 import { maxCurvature } from './track';
@@ -108,14 +110,18 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     window.addEventListener('resize', resize, { signal: abort.signal });
 
     audio.setMuted(options.muted);
-    audio.startEngine();
+    // Every car sounds like what it is; voices follow the sim's car order.
+    const playerEngine = engineProfileFor(setup.player.look.body);
+    const rivalCars = sim.cars.filter((car) => !car.isPlayer);
+    const rivalEngines = rivalCars.map((car) => engineProfileFor(car.racer.look.body));
+    audio.startEngine({ player: playerEngine, rivals: rivalEngines });
 
     let paused = false;
     const setPaused = (value: boolean): void => {
       if (sim.phase === 'finished') return;
       paused = value;
       overlay.hidden = !value;
-      if (value) audio.updateEngine({ revs: 0.1, throttle: 0, nitro: false });
+      if (value) audio.quietEngine();
     };
 
     const finish = (abandoned: boolean): void => {
@@ -297,6 +303,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     let accumulator = 0;
     let endAnnounced = false;
     let pendingShift: ShiftRequest = 0;
+    let previousSpeed = sim.player.speed;
+    let turbo: TurboState = IDLE_TURBO;
+    let smoothedAcceleration = 0;
 
     const tick = (now: number): void => {
       if (disposed) return;
@@ -334,15 +343,61 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           announceEnd();
         }
 
-        // Engine note from the real drivetrain: revs climb in each gear and drop at every shift.
+        // Engine note from the real drivetrain state.
         const player = sim.player;
+        if (elapsed > 0) {
+          const instant = (player.speed - previousSpeed) / elapsed;
+          smoothedAcceleration += (instant - smoothedAcceleration) * Math.min(1, elapsed * 8);
+        }
+        previousSpeed = player.speed;
         const { tuning } = player.gearbox;
-        const revs = Math.min(1.05, Math.max(0, (player.drivetrain.rpm - tuning.idleRpm) / (tuning.redlineRpm - tuning.idleRpm)));
-        audio.updateEngine({
-          revs: player.engine.exploded ? 0 : revs,
-          throttle: player.engine.exploded ? 0 : player.controls.throttle,
-          nitro: player.engine.nitroActive,
-        });
+        const revs = (player.drivetrain.rpm - tuning.idleRpm) / (tuning.redlineRpm - tuning.idleRpm);
+        const turboStep = stepTurbo(
+          turbo,
+          { throttle: player.engine.exploded ? 0 : player.controls.throttle, revs },
+          playerEngine,
+          elapsed,
+        );
+        turbo = turboStep.state;
+        if (turboStep.blowOff) audio.race('blowoff', playerEngine.turbo?.flutter ?? 0);
+        audio.updateEngine(
+          engineSoundParams(
+            {
+              rpm: player.drivetrain.rpm,
+              idleRpm: tuning.idleRpm,
+              redlineRpm: tuning.redlineRpm,
+              throttle: player.controls.throttle,
+              acceleration: smoothedAcceleration,
+              limiter: player.drivetrain.limiter,
+              wheelspin: player.wheelspin,
+              lateralSlip: sim.phase === 'racing' ? player.slip : 0,
+              nitro: player.engine.nitroActive,
+              off: player.engine.exploded,
+              speedRatio: Math.abs(player.speed) / player.drive.maxSpeed,
+              wet: sim.weather.id === 'wet',
+              turboSpool: turbo.spool,
+            },
+            playerEngine,
+          ),
+        );
+        // Rivals in creation order, matching the voices built by `startEngine`.
+        audio.updateRivals(
+          rivalCars.map((car, index) =>
+            rivalSoundParams(
+              {
+                rpm: car.drivetrain.rpm,
+                throttle: car.controls.throttle,
+                dx: car.x - player.x,
+                dy: car.y - player.y,
+                dvx: car.vx - player.vx,
+                dvy: car.vy - player.vy,
+                heading: player.heading,
+                off: car.engine.exploded,
+              },
+              rivalEngines[index],
+            ),
+          ),
+        );
 
         debug.hint = pickHint(elapsed);
         renderer.setHint(debug.hint);

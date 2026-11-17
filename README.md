@@ -22,9 +22,14 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
   pétarades au lever de pied. Chaque voiture a son moteur : 4 cylindres fatigué de la Biquette,
   4 pattes rageur du Furet, 16 soupapes de la Cobra (la distribution variable qui « accroche » en
   haut), 6 en ligne turbo de la Sakura, V6 turbo glougloutant du Bulldozer (sifflement et
-  dump valve qui crachote), V10 hurlant de la Mistral. Les pneus hurlent quand ça patine (bien
-  distinct du moteur) et crissent plus bas en glisse ; les moteurs des adversaires (chacun avec
-  sa voix) s'entendent, à gauche ou à droite, avec l'effet Doppler quand ils passent.
+  dump valve qui crachote), V10 hurlant de la Mistral. Un turbo monté change la voix : sifflement
+  et dump valve, et un **gros turbo maison** (pièce Racing ou mieux, préparée « par Dédé », « tombée
+  du camion »…) arrive avec sa cartographie pop & bang : rafales de détonations et flammes à
+  l'échappement à chaque lever de pied (Gros Dédé et Samira en ont un). L'échappement monté donne
+  de la voix et des pétarades plus fortes, jusqu'au « Tonnerre de Brest » ; le pot percé crache
+  même sans turbo. Les pneus hurlent quand ça patine (bien distinct du moteur) et crissent plus
+  bas en glisse ; les moteurs des adversaires (chacun avec sa voix) s'entendent, à gauche ou à
+  droite, avec l'effet Doppler quand ils passent.
 - **Départ au régime** : pendant le compte à rebours, l'accélérateur fait monter le régime (jauge à
   zones). Feu vert dans la zone verte : départ parfait (boost). Trop bas : le moteur cale dans les
   tours. Trop haut : ça patine jusqu'à ~5 s ; relâcher puis réaccélérer rend le grip aussitôt.
@@ -88,8 +93,9 @@ scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts`
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
 (`auto=1` : l'IA conduit Ned, `coach=1` : conseils de conduite, `weather=wet` : pluie,
-`gearbox=manual` : boîte manuelle, `sound=1` : son, `body=muscle` : carrosserie et moteur),
-pratique pour travailler un circuit ou le rendu.
+`gearbox=manual` : boîte manuelle, `sound=1` : son, `body=muscle` : carrosserie et moteur,
+`turbo=big-homemade` : turbo monté, `small`, `big`, `homemade` ou `big-homemade`, `exhaust=legende` :
+échappement monté, de `occasion` à `legende`), pratique pour travailler un circuit ou le rendu.
 
 ### Moteur, départ et météo
 
@@ -104,6 +110,8 @@ Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
 | `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, motricité, décalage du seuil de patinage, durée du patinage, multiplicateur de prime (×1,5 sous la pluie) |
 | `FORECAST_TUNING` | probabilité de pluie d'une course de carrière |
 | `ENGINE_SOUND_PROFILES` (`src/infra/engineProfiles.ts`) | la voix de chaque carrosserie : nombre de cylindres (hauteur = tr/min × cylindres / 120), harmoniques, glouglou, brillance, grain, pétarades, résonances d'échappement, distribution variable, turbo (sifflement, temps de réponse, dump valve) |
+| `popsAndBangsLevel`, `POPS_AND_BANGS` (`src/infra/engineProfiles.ts`) | turbo monté → niveau pop & bang (gros + maison = 1, gros = 0,4, maison = 0,3) ; régime minimal, durée et cadence de la rafale après un lever de pied |
+| `EXHAUST_SOUND` (`src/infra/engineProfiles.ts`) | par rareté d'échappement : volume, brillance, rugosité, pétarades, force des détonations (×1,15 à ×1,6), pops sans turbo ; une ligne « maison » est plus brute |
 | `TYRE_SOUND`, `RIVAL_SOUND` (`src/infra/engineSound.ts`) | seuils, niveaux et hauteurs du crissement des pneus ; portée, atténuation et Doppler des moteurs adverses |
 
 Les modèles sont purs et testés : `drivetrain.ts` (rapports, régime), `launch.ts` (machine à états

@@ -1,6 +1,6 @@
 import { carModel, NEON_PRICE, PAINT_JOB_PRICE } from './cars';
 import { jewelKind, jewelResaleValue, swagMultiplier } from './jewels';
-import { buildPart, partResaleValue, rollPart } from './parts';
+import { buildPart, exhaustBuildOf, partResaleValue, rollPart, turboBuildOf } from './parts';
 import { createRng } from './rng';
 import {
   err,
@@ -22,6 +22,8 @@ import {
   type Slot,
   type StatKey,
   type Stats,
+  type ExhaustBuild,
+  type TurboBuild,
 } from './types';
 import { forecastWeather, weatherProfile } from './weather';
 import { DISTRICTS, districtIndex } from './world';
@@ -334,6 +336,8 @@ function rivalToRacer(spec: RivalSpec): Racer {
     condition: 100,
     skill: spec.skill,
     recklessness: spec.recklessness,
+    ...(spec.turbo ? { turbo: spec.turbo } : {}),
+    ...(spec.exhaust ? { exhaust: spec.exhaust } : {}),
   };
 }
 
@@ -352,7 +356,19 @@ export function playerRacer(state: GameState): Racer {
     condition: car.condition,
     skill: 1,
     recklessness: 0,
+    ...soundBuildOf(state, car),
   };
+}
+
+/** The fitted turbo and exhaust, spread into a `Racer` (nothing for a stock car). */
+function soundBuildOf(state: GameState, car: OwnedCar): { turbo?: TurboBuild; exhaust?: ExhaustBuild } {
+  const fitted = (slot: Slot): Part | undefined => {
+    const uid = car.equipped[slot];
+    return uid === undefined ? undefined : partByUid(state, uid);
+  };
+  const turbo = turboBuildOf(fitted('turbo'));
+  const exhaust = exhaustBuildOf(fitted('exhaust'));
+  return { ...(turbo ? { turbo } : {}), ...(exhaust ? { exhaust } : {}) };
 }
 
 export function canEnterEvent(state: GameState, event: RaceEvent): Result<true> {

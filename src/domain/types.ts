@@ -143,6 +143,9 @@ export interface RivalSpec {
   /** 0–1: how deep into the red zone the driver is willing to push nitro. */
   readonly recklessness: number;
   readonly spoiler: boolean;
+  /** Fitted turbo and exhaust (sound only), see `TurboBuild` and `ExhaustBuild`. */
+  readonly turbo?: TurboBuild;
+  readonly exhaust?: ExhaustBuild;
 }
 
 export interface RaceEvent {
@@ -199,6 +202,22 @@ export interface CarLook {
   readonly spoiler: boolean;
 }
 
+/** What kind of turbo a car runs: it shapes how the car sounds, not how it drives (the stats do that). */
+export interface TurboBuild {
+  /** Racing rarity and up: a big snail, laggy and loud. */
+  readonly big: boolean;
+  /** Built or fitted in someone's garage (a dodgy quirk): tuned with a pop-and-bang map. */
+  readonly homemade: boolean;
+}
+
+/** What exhaust a car runs: like the turbo, it shapes how the car sounds, not how it drives. */
+export interface ExhaustBuild {
+  /** From the holed "pot percé" (occasion) to the legendary thunder pipe. */
+  readonly rarity: Rarity;
+  /** Garage work rather than a factory part (a dodgy quirk). */
+  readonly homemade: boolean;
+}
+
 export interface Racer {
   readonly name: string;
   readonly look: CarLook;
@@ -207,6 +226,10 @@ export interface Racer {
   readonly condition: number;
   readonly skill: number;
   readonly recklessness: number;
+  /** Fitted turbo, if any (absent: the car runs as it left the factory). */
+  readonly turbo?: TurboBuild;
+  /** Fitted exhaust, if any. */
+  readonly exhaust?: ExhaustBuild;
 }
 
 export interface RaceSetup {

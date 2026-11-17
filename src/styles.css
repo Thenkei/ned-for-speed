@@ -559,6 +559,14 @@ kbd {
   font-weight: 800;
   white-space: nowrap;
 }
+.part-sound {
+  font-size: 12px;
+  color: var(--dim);
+}
+.part-sound.bangs {
+  color: #ffb43a;
+  font-weight: 700;
+}
 .part-delta {
   display: flex;
   flex-wrap: wrap;

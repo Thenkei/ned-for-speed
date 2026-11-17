@@ -2,12 +2,24 @@
  * Dev harness (see /race-dev.html): launches a race directly, without the
  * career, to work on tracks, physics and rendering.
  * Query params: track, level (player and rival strength), laps, rivals, auto=1 (AI drives),
- * coach=1 (driving tips), weather=wet, gearbox=manual, body=<BodyKind>.
+ * coach=1 (driving tips), weather=wet, gearbox=manual, body=<BodyKind>,
+ * turbo=small|big|homemade|big-homemade (fitted turbo: whistle, pops and bangs),
+ * exhaust=occasion|sport|racing|proto|legende (fitted exhaust: louder voice and bangs).
  */
-import type { RaceSetup, Racer, Stats, ThemeId } from '../domain/types';
+import { RARITIES, type RaceSetup, type Racer, type Rarity, type Stats, type ThemeId, type TurboBuild } from '../domain/types';
 import { runRace } from './index';
 
 const params = new URLSearchParams(location.search);
+
+const TURBO_PARAM: Readonly<Record<string, TurboBuild>> = {
+  small: { big: false, homemade: false },
+  big: { big: true, homemade: false },
+  homemade: { big: false, homemade: true },
+  'big-homemade': { big: true, homemade: true },
+};
+const turbo = TURBO_PARAM[params.get('turbo') ?? ''];
+const exhaustParam = params.get('exhaust');
+const exhaustRarity = RARITIES.find((rarity): rarity is Rarity => rarity === exhaustParam);
 const trackId = params.get('track') ?? 'parking';
 const level = Number(params.get('level') ?? 30);
 const laps = Number(params.get('laps') ?? 2);
@@ -38,6 +50,8 @@ const setup: RaceSetup = {
     condition: 100,
     skill: 1,
     recklessness: 0,
+    ...(turbo ? { turbo } : {}),
+    ...(exhaustRarity ? { exhaust: { rarity: exhaustRarity, homemade: false } } : {}),
   },
   rivals,
   seed: Number(params.get('seed') ?? 42),

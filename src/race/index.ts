@@ -2,10 +2,20 @@ import './race.css';
 import type { ShiftRequest } from '../domain/drivetrain';
 import type { LaunchEnd, LaunchGrade } from '../domain/launch';
 import type { TransmissionMode } from '../domain/tuning';
-import type { RaceOutcome, RaceSetup } from '../domain/types';
+import type { RaceOutcome, RaceSetup, Racer } from '../domain/types';
 import { audio } from '../infra/audio';
-import { engineProfileFor, IDLE_TURBO, stepTurbo, type TurboState } from '../infra/engineProfiles';
-import { engineSoundParams, rivalSoundParams } from '../infra/engineSound';
+import {
+  bangStrength,
+  engineProfileFor,
+  IDLE_TURBO,
+  ON_THROTTLE,
+  stepPopsAndBangs,
+  stepTurbo,
+  tunedEngineProfile,
+  type EngineSoundProfile,
+  type TurboState,
+} from '../infra/engineProfiles';
+import { engineSoundParams, RIVAL_SOUND, rivalSoundParams } from '../infra/engineSound';
 import { createRaceInput } from './input';
 import { RaceRenderer, formatTime } from './render';
 import { maxCurvature } from './track';
@@ -16,6 +26,7 @@ import {
   raceOutcome,
   resetCarToTrack,
   stepRaceSim,
+  type CarSim,
   type RaceSim,
 } from './sim';
 
@@ -110,11 +121,17 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     window.addEventListener('resize', resize, { signal: abort.signal });
 
     audio.setMuted(options.muted);
-    // Every car sounds like what it is; voices follow the sim's car order.
-    const playerEngine = engineProfileFor(setup.player.look.body);
+    // Every car sounds like what it is, with the turbo and exhaust it has fitted;
+    // voices follow the sim's car order.
+    const engineOf = (racer: Racer) => tunedEngineProfile(engineProfileFor(racer.look.body), racer);
+    const playerEngine = engineOf(setup.player);
     const rivalCars = sim.cars.filter((car) => !car.isPlayer);
-    const rivalEngines = rivalCars.map((car) => engineProfileFor(car.racer.look.body));
+    const rivalEngines = rivalCars.map((car) => engineOf(car.racer));
     audio.startEngine({ player: playerEngine, rivals: rivalEngines });
+    // Pop-and-bang maps (a big home-made turbo): one overrun tracker per car that has one.
+    const bangers = sim.cars
+      .map((car) => ({ car, engine: car.isPlayer ? playerEngine : engineOf(car.racer), overrun: ON_THROTTLE }))
+      .filter((banger) => banger.engine.popsAndBangs > 0);
 
     let paused = false;
     const setPaused = (value: boolean): void => {
@@ -240,6 +257,10 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
             break;
           }
           case 'shift':
+            // Flat-shifting a pop-and-bang car on full throttle: the cut fires a bang.
+            if (car?.isPlayer && event.direction > 0 && car.controls.throttle > 0.5 && Math.random() < playerEngine.popsAndBangs) {
+              backfire(car, playerEngine, 0.8);
+            }
             if (car?.isPlayer) audio.race('shift', event.direction);
             break;
           case 'finish':
@@ -305,6 +326,15 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     let pendingShift: ShiftRequest = 0;
     let previousSpeed = sim.player.speed;
     let turbo: TurboState = IDLE_TURBO;
+
+    /** One exhaust bang: heard (quieter from afar for rivals) and seen. */
+    const backfire = (car: CarSim, engine: EngineSoundProfile, revs: number): void => {
+      const strength = bangStrength(revs, engine, Math.random());
+      const distance = Math.hypot(car.x - sim.player.x, car.y - sim.player.y);
+      const heard = car.isPlayer ? 1 : 1 / (1 + (distance / RIVAL_SOUND.halfDistance) ** 2);
+      if (heard > 0.04) audio.race('bang', strength * heard);
+      renderer.backfire(car, strength);
+    };
     let smoothedAcceleration = 0;
 
     const tick = (now: number): void => {
@@ -360,6 +390,20 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         );
         turbo = turboStep.state;
         if (turboStep.blowOff) audio.race('blowoff', playerEngine.turbo?.flutter ?? 0);
+        for (const banger of bangers) {
+          const { car, engine } = banger;
+          const { tuning: carTuning } = car.gearbox;
+          const carRevs = (car.drivetrain.rpm - carTuning.idleRpm) / (carTuning.redlineRpm - carTuning.idleRpm);
+          const step = stepPopsAndBangs(
+            banger.overrun,
+            { throttle: car.engine.exploded || car.finished ? 1 : car.controls.throttle, revs: carRevs },
+            engine,
+            elapsed,
+          );
+          banger.overrun = step.state;
+          // At most one bang per frame: a Poisson process sampled at the frame rate.
+          if (step.liftBang || Math.random() < step.bangRate * elapsed) backfire(car, engine, carRevs);
+        }
         audio.updateEngine(
           engineSoundParams(
             {

@@ -1,4 +1,4 @@
-import type { BodyKind, Boss, District, RaceEvent, RivalSpec } from './types';
+import type { BodyKind, Boss, District, ExhaustBuild, RaceEvent, RivalSpec, TurboBuild } from './types';
 
 interface RivalOptions {
   readonly body?: BodyKind;
@@ -7,6 +7,9 @@ interface RivalOptions {
   readonly skill?: number;
   readonly recklessness?: number;
   readonly spoiler?: boolean;
+  /** A fitted turbo and exhaust: sound only (the level already sets the stats). */
+  readonly turbo?: TurboBuild;
+  readonly exhaust?: ExhaustBuild;
   /** Per-stat offsets around the level, to give rivals a personality. */
   readonly tweak?: Partial<Record<'topSpeed' | 'accel' | 'handling' | 'reliability', number>>;
 }
@@ -47,8 +50,13 @@ function rival(name: string, level: number, options: RivalOptions = {}): RivalSp
     skill: options.skill ?? 0.8,
     recklessness: options.recklessness ?? 0.25,
     spoiler: options.spoiler ?? level > 30,
+    ...(options.turbo ? { turbo: options.turbo } : {}),
+    ...(options.exhaust ? { exhaust: options.exhaust } : {}),
   };
 }
+
+/** Garage-built big turbo with a pop-and-bang map: you hear these cars coming. */
+const BIG_HOMEMADE_TURBO: TurboBuild = { big: true, homemade: true };
 
 function event(
   id: string,
@@ -96,7 +104,7 @@ const dede: Boss = {
   ],
   onWin: 'Hmpf. T’as un bon coup de volant, gamin. Passe au garage, je te ferai un prix.',
   onLose: 'Trente ans, je te dis. Allez, file, et resserre tes roues.',
-  rival: rival('Gros Dédé', 54, { body: 'muscle', paint: '#1f4e8c', neon: '', skill: 0.86, recklessness: 0.15, tweak: { accel: 4, handling: -3, reliability: 30 } }),
+  rival: rival('Gros Dédé', 54, { body: 'muscle', paint: '#1f4e8c', neon: '', skill: 0.86, recklessness: 0.15, turbo: BIG_HOMEMADE_TURBO, exhaust: { rarity: 'legende', homemade: true }, tweak: { accel: 4, handling: -3, reliability: 30 } }),
   laps: 3,
   minStake: 600,
   trophyKindId: 'trophy-dede',
@@ -116,7 +124,7 @@ const samira: Boss = {
   ],
   onWin: 'Pas mal du tout. Garde la chaîne, elle te portera chance. Ou pas.',
   onLose: 'Tu as levé le pied. Sur les quais, ça ne pardonne pas.',
-  rival: rival('Samira', 70, { body: 'sport', paint: '#ff2d6f', neon: '#ff3fa4', skill: 0.88, recklessness: 0.85, tweak: { topSpeed: 4, reliability: 15 } }),
+  rival: rival('Samira', 70, { body: 'sport', paint: '#ff2d6f', neon: '#ff3fa4', skill: 0.88, recklessness: 0.85, turbo: BIG_HOMEMADE_TURBO, exhaust: { rarity: 'proto', homemade: false }, tweak: { topSpeed: 4, reliability: 15 } }),
   laps: 3,
   minStake: 1800,
   trophyKindId: 'trophy-samira',

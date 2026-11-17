@@ -1,4 +1,5 @@
 import { jewelKind } from '../domain/jewels';
+import { exhaustBuildOf, turboBuildOf } from '../domain/parts';
 import {
   RARITY_LABELS,
   SLOT_ICONS,
@@ -11,6 +12,7 @@ import {
   type StatKey,
   type Stats,
 } from '../domain/types';
+import { exhaustSoundLabel, popsAndBangsLevel, turboSoundLabel } from '../infra/engineProfiles';
 import { esc, euro, safeAsset, safeColor, signed } from './dom';
 
 /** Upper bound of the stat bars (a fully legendary Mistral peaks around 125). */
@@ -95,6 +97,12 @@ export function partCard(part: Part, options: PartCardOptions = {}): string {
       ? ''
       : `<div class="part-delta"><span class="part-delta-label">${esc(options.deltaLabel ?? 'Si montée')}</span>${options.delta}</div>`;
   const actions = options.actions ? `<div class="part-actions">${options.actions}</div>` : '';
+  // Turbos and exhausts change how the car sounds: say so, it is half the fun of fitting one.
+  const turbo = turboBuildOf(part);
+  const exhaust = exhaustBuildOf(part);
+  const soundLabel = turbo ? turboSoundLabel(turbo) : exhaust ? exhaustSoundLabel(exhaust) : undefined;
+  const loud = (turbo && popsAndBangsLevel(turbo) >= 1) || exhaust?.rarity === 'legende';
+  const sound = soundLabel ? `<div class="part-sound${loud ? ' bangs' : ''}">🔊 ${esc(soundLabel)}</div>` : '';
   return `
     <article class="part rarity-${part.rarity}${options.compact ? ' compact' : ''}">
       <header class="part-head">
@@ -108,6 +116,7 @@ export function partCard(part: Part, options: PartCardOptions = {}): string {
         ${badge}
       </header>
       ${bonusChips(part.bonus)}
+      ${sound}
       ${delta}
       ${actions}
     </article>`;

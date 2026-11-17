@@ -264,6 +264,34 @@ export class RaceRenderer {
     if (car.isPlayer) this.addShake(0.35);
   }
 
+  /** Exhaust backfire (pop-and-bang map): a flame licking out of the tailpipe. */
+  backfire(car: CarSim, strength: number): void {
+    const shape = BODY_SHAPES[car.racer.look.body];
+    const cos = Math.cos(car.heading);
+    const sin = Math.sin(car.heading);
+    const exhaustX = car.x - cos * shape.length * 0.52;
+    const exhaustY = car.y - sin * shape.length * 0.52;
+    const count = Math.round(7 + strength * 9);
+    for (let i = 0; i < count; i++) {
+      const spread = (Math.random() - 0.5) * 0.45;
+      // Slow particles stay at the tailpipe (the fireball), fast ones lick out behind.
+      const speed = 40 + Math.random() * 200 * (0.5 + strength);
+      const core = i < 3;
+      this.spawn({
+        kind: i < count - 3 ? 'fire' : 'spark',
+        x: exhaustX - cos * Math.random() * 6,
+        y: exhaustY - sin * Math.random() * 6,
+        vx: car.vx - Math.cos(car.heading + spread) * speed,
+        vy: car.vy - Math.sin(car.heading + spread) * speed,
+        life: 0,
+        maxLife: 0.12 + Math.random() * 0.16,
+        size: (core ? 7 : 4) + strength * 7 * Math.random(),
+        color: core ? '#fff3a0' : i % 2 === 0 ? '#ff9a2f' : '#ff5a12',
+      });
+    }
+    if (car.isPlayer) this.addShake(0.12 + strength * 0.25);
+  }
+
   sparks(car: CarSim, strength: number): void {
     const count = Math.round(3 + strength * 8);
     for (let i = 0; i < count; i++) {

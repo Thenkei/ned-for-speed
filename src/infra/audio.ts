@@ -4,7 +4,7 @@
  * browser without WebAudio: it simply stays silent.
  */
 
-import { DEFAULT_ENGINE_PROFILE, type EngineSoundProfile } from './engineProfiles';
+import { DEFAULT_ENGINE_PROFILE, MAX_BANG, type EngineSoundProfile } from './engineProfiles';
 import type { EngineSoundParams, RivalSoundParams } from './engineSound';
 
 export type UiSound = 'click' | 'buy' | 'error' | 'equip' | 'win' | 'lose' | 'jewel';
@@ -20,7 +20,8 @@ export type RaceSound =
   | 'wheelspin'
   | 'grip'
   | 'shift'
-  | 'blowoff';
+  | 'blowoff'
+  | 'bang';
 
 /** Every node of Ned's engine and tyre voice, so that it can be glided and torn down as one. */
 interface EngineVoice {
@@ -199,6 +200,41 @@ function screech(duration: number, from: number, to: number, volume: number): vo
   }
 }
 
+/**
+ * Exhaust backfire: a chest-thump (falling sine), a sharp crack (high-passed
+ * noise) and a short boom tail. Much bigger than an overrun crackle.
+ */
+function bang(strength: number): void {
+  const ctx = ensureContext();
+  if (!ctx || !master || muted) return;
+  const s = Math.max(0.05, Math.min(MAX_BANG, strength));
+  const now = ctx.currentTime;
+  const thump = ctx.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(115, now);
+  thump.frequency.exponentialRampToValueAtTime(38, now + 0.09);
+  const thumpGain = ctx.createGain();
+  thumpGain.gain.setValueAtTime(0.0001, now);
+  thumpGain.gain.exponentialRampToValueAtTime(0.55 * s, now + 0.004);
+  thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+  thump.connect(thumpGain).connect(master);
+  const crack = ctx.createBufferSource();
+  crack.buffer = noise(ctx);
+  const crackFilter = ctx.createBiquadFilter();
+  crackFilter.type = 'highpass';
+  crackFilter.frequency.value = 700;
+  const crackGain = ctx.createGain();
+  crackGain.gain.setValueAtTime(0.0001, now);
+  crackGain.gain.exponentialRampToValueAtTime(0.45 * s, now + 0.002);
+  crackGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+  crack.connect(crackFilter).connect(crackGain).connect(master);
+  thump.start(now);
+  thump.stop(now + 0.16);
+  crack.start(now, Math.random() * 1.2);
+  crack.stop(now + 0.09);
+  burst(0.2, 0.16 * s, 1100, 180, 0.01);
+}
+
 /** Turbo blow-off: a bright "pssh" of air, fluttering on a big turbo. */
 function blowOff(flutter: number): void {
   const ctx = ensureContext();
@@ -295,6 +331,8 @@ const RACE_SOUNDS: Readonly<Record<RaceSound, (strength: number) => void>> = {
   grip: () => tone({ frequency: 520, to: 880, duration: 0.12, type: 'triangle', volume: 0.12 }),
   // Blow-off valve venting the boost; `strength` > 0 adds the big turbo's flutter ("tchu-tu-tu").
   blowoff: (strength) => blowOff(strength),
+  // Pop-and-bang map: an exhaust backfire; `strength` 0–1.
+  bang: (strength) => bang(strength),
   shift: (strength) => {
     // A dull clunk; upshifts (strength 1) slightly higher than downshifts.
     burst(0.05, 0.16, 700, 180);

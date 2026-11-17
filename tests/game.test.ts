@@ -5,6 +5,7 @@ import {
   applyBossOutcome,
   applyEventOutcome,
   bossRaceSetup,
+  playerRacer,
   buyCar,
   buyJewel,
   buyPart,
@@ -26,10 +27,10 @@ import {
   unequipSlot,
 } from '../src/domain/game';
 import { JEWEL_KINDS, jewelKind, swagMultiplier } from '../src/domain/jewels';
-import { buildPart, rarityOdds, rollPart } from '../src/domain/parts';
+import { buildPart, exhaustBuildOf, rarityOdds, rollPart, turboBuildOf } from '../src/domain/parts';
 import { createRng } from '../src/domain/rng';
 import { WEATHER_PROFILES } from '../src/domain/tuning';
-import { RARITIES, type GameState, type RaceOutcome } from '../src/domain/types';
+import { RARITIES, type GameState, type RaceOutcome, type Rarity } from '../src/domain/types';
 import { DISTRICTS } from '../src/domain/world';
 
 const outcome = (overrides: Partial<RaceOutcome> = {}): RaceOutcome => ({
@@ -91,6 +92,48 @@ describe('parts', () => {
 
   it('rolls the same part from the same seed', () => {
     expect(rollPart(createRng(5), 'p', 2)).toEqual(rollPart(createRng(5), 'p', 2));
+  });
+
+  it('tells a big home-made turbo from the rest', () => {
+    // Quirk 0 is "préparé par Dédé" (garage work), quirk 2 "allégé" (factory lightening).
+    const turbo = (rarity: Rarity, quirkIndex?: number) =>
+      turboBuildOf(buildPart({ uid: 't', slot: 'turbo', rarity, ...(quirkIndex === undefined ? {} : { quirkIndex }) }));
+    expect(turbo('racing', 0)).toEqual({ big: true, homemade: true });
+    expect(turbo('legende')).toEqual({ big: true, homemade: false });
+    expect(turbo('occasion', 0)).toEqual({ big: false, homemade: true });
+    expect(turbo('sport', 2)).toEqual({ big: false, homemade: false });
+    expect(turboBuildOf(buildPart({ uid: 'e', slot: 'engine', rarity: 'racing', quirkIndex: 0 }))).toBeUndefined();
+    expect(turboBuildOf(undefined)).toBeUndefined();
+  });
+
+  it('describes an exhaust by its rarity and whether it is garage work', () => {
+    expect(exhaustBuildOf(buildPart({ uid: 'x', slot: 'exhaust', rarity: 'occasion' }))).toEqual({ rarity: 'occasion', homemade: false });
+    expect(exhaustBuildOf(buildPart({ uid: 'x', slot: 'exhaust', rarity: 'legende', quirkIndex: 1 }))).toEqual({ rarity: 'legende', homemade: true });
+    expect(exhaustBuildOf(buildPart({ uid: 'x', slot: 'turbo', rarity: 'legende' }))).toBeUndefined();
+  });
+
+  it('puts the fitted turbo and exhaust on Ned’s car for the race, and takes them off with the parts', () => {
+    const turbo = buildPart({ uid: 'big-turbo', slot: 'turbo', rarity: 'racing', quirkIndex: 0 });
+    const exhaust = buildPart({ uid: 'thunder', slot: 'exhaust', rarity: 'legende' });
+    let state: GameState = { ...newGame(3), inventory: [...newGame(3).inventory, turbo, exhaust] };
+    expect(playerRacer(state).turbo).toBeUndefined();
+    expect(playerRacer(state).exhaust).toBeUndefined();
+    state = unwrap(equipPart(state, state.activeCarUid, turbo.uid));
+    state = unwrap(equipPart(state, state.activeCarUid, exhaust.uid));
+    expect(playerRacer(state).turbo).toEqual({ big: true, homemade: true });
+    expect(playerRacer(state).exhaust).toEqual({ rarity: 'legende', homemade: false });
+    state = unwrap(unequipSlot(state, state.activeCarUid, 'turbo'));
+    state = unwrap(unequipSlot(state, state.activeCarUid, 'exhaust'));
+    expect(playerRacer(state).turbo).toBeUndefined();
+    expect(playerRacer(state).exhaust).toBeUndefined();
+  });
+
+  it('a couple of rivals run big home-made turbos (sound only)', () => {
+    const turbos = DISTRICTS.flatMap((d) => [d.boss.rival, ...d.events.flatMap((e) => e.rivals)]).filter((r) => r.turbo);
+    expect(turbos.map((r) => r.name)).toEqual(expect.arrayContaining(['Gros Dédé', 'Samira']));
+    const dede = bossRaceSetup(newGame(1), DISTRICTS[1]!).rivals[0];
+    expect(dede?.turbo).toEqual({ big: true, homemade: true });
+    expect(dede?.exhaust?.rarity).toBe('legende');
   });
 
   it('buys, equips, unequips and sells', () => {

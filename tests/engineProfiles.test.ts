@@ -1,14 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { CAR_MODELS } from '../src/domain/cars';
-import type { BodyKind } from '../src/domain/types';
+import type { BodyKind, Rarity } from '../src/domain/types';
+import { RARITIES } from '../src/domain/types';
 import {
+  bangStrength,
+  EXHAUST_SOUND,
+  exhaustSoundLabel,
+  MAX_BANG,
   DEFAULT_ENGINE_PROFILE,
   ENGINE_SOUND_PROFILES,
   engineProfileFor,
   firingFrequency,
   IDLE_TURBO,
+  ON_THROTTLE,
+  POPS_AND_BANGS,
+  popsAndBangsLevel,
+  stepPopsAndBangs,
   stepTurbo,
+  tunedEngineProfile,
+  turboSoundLabel,
   type EngineSoundProfile,
+  type OverrunState,
   type TurboState,
 } from '../src/infra/engineProfiles';
 import { engineSoundParams, rivalSoundParams, type EngineSoundInput } from '../src/infra/engineSound';
@@ -176,3 +188,160 @@ describe('turbo', () => {
   });
 });
 
+describe('fitted turbos', () => {
+  const BIG_HOMEMADE = { big: true, homemade: true };
+  const furet = ENGINE_SOUND_PROFILES.hatch;
+
+  it('a stock car is untouched; any turbo adds the whistle without changing the engine', () => {
+    expect(tunedEngineProfile(furet, {})).toBe(furet);
+    const tuned = tunedEngineProfile(furet, { turbo: { big: false, homemade: false } });
+    expect(furet.turbo).toBeUndefined();
+    expect(tuned.turbo?.level).toBeGreaterThan(0);
+    expect(tuned.popsAndBangs).toBe(0);
+    expect([tuned.cylinders, tuned.harmonics, tuned.resonances]).toEqual([furet.cylinders, furet.harmonics, furet.resonances]);
+  });
+
+  it('only makes a factory turbo bigger, never smaller', () => {
+    const bulldozer = ENGINE_SOUND_PROFILES.muscle;
+    const small = tunedEngineProfile(bulldozer, { turbo: { big: false, homemade: false } });
+    expect(small.turbo).toEqual(bulldozer.turbo);
+    const sakura = tunedEngineProfile(ENGINE_SOUND_PROFILES.sport, { turbo: BIG_HOMEMADE });
+    expect(sakura.turbo?.level).toBe(1);
+    expect(sakura.turbo?.flutter).toBe(1);
+  });
+
+  it('the big home-made turbo is the full pop-and-bang; the others only pop now and then', () => {
+    expect(popsAndBangsLevel(BIG_HOMEMADE)).toBe(1);
+    expect(popsAndBangsLevel({ big: true, homemade: false })).toBeGreaterThan(0);
+    expect(popsAndBangsLevel({ big: true, homemade: false })).toBeLessThan(0.5);
+    expect(popsAndBangsLevel({ big: false, homemade: true })).toBeLessThan(0.5);
+    expect(popsAndBangsLevel({ big: false, homemade: false })).toBe(0);
+    expect(popsAndBangsLevel(undefined)).toBe(0);
+    for (const body of BODIES) expect(ENGINE_SOUND_PROFILES[body].popsAndBangs).toBe(0);
+    expect(turboSoundLabel(BIG_HOMEMADE)).toMatch(/pop & bang/);
+  });
+});
+
+describe('pops and bangs', () => {
+  const FULL_MAP = { popsAndBangs: 1, bangLoudness: 1 };
+  const banger = tunedEngineProfile(ENGINE_SOUND_PROFILES.hatch, { turbo: { big: true, homemade: true } });
+  const mild = tunedEngineProfile(ENGINE_SOUND_PROFILES.hatch, { turbo: { big: true, homemade: false } });
+  const stock = ENGINE_SOUND_PROFILES.hatch;
+
+  /** Lifts at `revs` after a second on the throttle; returns the bang rate over time and the lift bang. */
+  function lift(profile: EngineSoundProfile, revs: number, seconds: number) {
+    let state: OverrunState = ON_THROTTLE;
+    for (let t = 0; t < 1; t += DT) state = stepPopsAndBangs(state, { throttle: 1, revs }, profile, DT).state;
+    const first = stepPopsAndBangs(state, { throttle: 0, revs }, profile, DT);
+    state = first.state;
+    let expected = first.bangRate * DT;
+    let last = first;
+    for (let t = DT; t < seconds; t += DT) {
+      last = stepPopsAndBangs(state, { throttle: 0, revs }, profile, DT);
+      state = last.state;
+      expected += last.bangRate * DT;
+    }
+    return { liftBang: first.liftBang, expectedBangs: expected, finalRate: last.bangRate };
+  }
+
+  it('a big home-made turbo cracks on the lift and fires a volley of bangs', () => {
+    const volley = lift(banger, 0.8, 2);
+    expect(volley.liftBang).toBe(true);
+    expect(volley.expectedBangs).toBeGreaterThan(8);
+    // …which dies out: the map only fires right after the lift.
+    expect(volley.finalRate).toBe(0);
+  });
+
+  it('a milder build pops less, a stock car never', () => {
+    expect(lift(mild, 0.8, 2).expectedBangs).toBeLessThan(lift(banger, 0.8, 2).expectedBangs * 0.5);
+    expect(lift(mild, 0.8, 2).liftBang).toBe(false);
+    const quiet = lift(stock, 0.8, 2);
+    expect(quiet.expectedBangs).toBe(0);
+    expect(quiet.liftBang).toBe(false);
+  });
+
+  it('needs revs: no bang when lifting from idle, and more the higher the revs', () => {
+    const idle = lift(banger, POPS_AND_BANGS.minRevs - 0.05, 2);
+    expect(idle.expectedBangs).toBe(0);
+    expect(idle.liftBang).toBe(false);
+    expect(lift(banger, 1, 2).expectedBangs).toBeGreaterThan(lift(banger, 0.5, 2).expectedBangs);
+  });
+
+  it('stays silent on the throttle', () => {
+    let state: OverrunState = ON_THROTTLE;
+    for (let t = 0; t < 2; t += DT) {
+      const step = stepPopsAndBangs(state, { throttle: 1, revs: 0.9 }, banger, DT);
+      expect(step.bangRate).toBe(0);
+      expect(step.liftBang).toBe(false);
+      state = step.state;
+    }
+  });
+
+  it('bangs land in a sane loudness range', () => {
+    for (const revs of [0, 0.5, 1, 2]) {
+      for (const roll of [0, 0.5, 1]) {
+        const s = bangStrength(revs, FULL_MAP, roll);
+        expect(s).toBeGreaterThan(0);
+        expect(s).toBeLessThanOrEqual(1);
+      }
+    }
+    expect(bangStrength(1, FULL_MAP, 0.5)).toBeGreaterThan(bangStrength(0.3, FULL_MAP, 0.5));
+  });
+
+  it('survives garbage input', () => {
+    const step = stepPopsAndBangs(ON_THROTTLE, { throttle: Number.NaN, revs: Number.NaN }, banger, DT);
+    expect(step.bangRate).toBe(0);
+    expect(step.liftBang).toBe(false);
+  });
+});
+
+describe('fitted exhausts', () => {
+  const furet = ENGINE_SOUND_PROFILES.hatch;
+  const bigHomemadeTurbo = { big: true, homemade: true };
+  const lift = { ...pulling, rpm: 5000, throttle: 0, acceleration: -150 };
+
+  it('every exhaust makes the engine louder and spit more on the overrun', () => {
+    for (const rarity of RARITIES) {
+      const tuned = tunedEngineProfile(furet, { exhaust: { rarity, homemade: false } });
+      expect(engineSoundParams(pulling, tuned).gain, rarity).toBeGreaterThan(engineSoundParams(pulling, furet).gain);
+      expect(engineSoundParams(lift, tuned).crackleRate, rarity).toBeGreaterThan(engineSoundParams(lift, furet).crackleRate);
+      expect(tuned.bangLoudness, rarity).toBeGreaterThan(1);
+      // Only the voice changes, never the engine.
+      expect(tuned.cylinders).toBe(furet.cylinders);
+    }
+  });
+
+  it('makes a big home-made turbo bang harder, the thunder pipe hardest', () => {
+    const turboOnly = tunedEngineProfile(furet, { turbo: bigHomemadeTurbo });
+    const withPipe = (rarity: Rarity) => tunedEngineProfile(furet, { turbo: bigHomemadeTurbo, exhaust: { rarity, homemade: false } });
+    const hit = (profile: EngineSoundProfile) => bangStrength(0.9, profile, 0.5);
+    expect(hit(withPipe('sport'))).toBeGreaterThan(hit(turboOnly));
+    for (const rarity of RARITIES) expect(hit(withPipe('legende'))).toBeGreaterThanOrEqual(hit(withPipe(rarity)));
+    expect(hit(withPipe('legende'))).toBeGreaterThan(1.3 * hit(turboOnly));
+    // The loudest possible bang stays bounded.
+    expect(bangStrength(2, withPipe('legende'), 1)).toBeLessThanOrEqual(MAX_BANG);
+  });
+
+  it('a holed silencer or a race pipe pops a little on its own; a mild inox line does not', () => {
+    expect(tunedEngineProfile(furet, { exhaust: { rarity: 'occasion', homemade: false } }).popsAndBangs).toBeGreaterThan(0);
+    expect(tunedEngineProfile(furet, { exhaust: { rarity: 'legende', homemade: false } }).popsAndBangs).toBeGreaterThan(0);
+    expect(tunedEngineProfile(furet, { exhaust: { rarity: 'sport', homemade: false } }).popsAndBangs).toBe(0);
+    // Never a full map without the turbo: no signature lift bang.
+    for (const rarity of RARITIES) expect(EXHAUST_SOUND[rarity].pops).toBeLessThan(0.5);
+  });
+
+  it('a home-made line is rawer than the catalogue one', () => {
+    const shop = tunedEngineProfile(furet, { exhaust: { rarity: 'racing', homemade: false } });
+    const garage = tunedEngineProfile(furet, { exhaust: { rarity: 'racing', homemade: true } });
+    expect(garage.roughness).toBeGreaterThan(shop.roughness);
+    expect(garage.crackle).toBeGreaterThan(shop.crackle);
+    expect(exhaustSoundLabel({ rarity: 'racing', homemade: true })).toMatch(/maison/);
+  });
+
+  it('stacks with a turbo without losing either', () => {
+    const both = tunedEngineProfile(ENGINE_SOUND_PROFILES.sport, { turbo: bigHomemadeTurbo, exhaust: { rarity: 'proto', homemade: false } });
+    expect(both.turbo?.level).toBe(1);
+    expect(both.popsAndBangs).toBe(1);
+    expect(both.brightness).toBeGreaterThan(ENGINE_SOUND_PROFILES.sport.brightness);
+  });
+});

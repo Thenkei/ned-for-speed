@@ -1,5 +1,5 @@
 import type { Rng } from './rng';
-import { RARITIES, SLOTS, type Part, type Rarity, type Slot, type StatKey } from './types';
+import { RARITIES, SLOTS, type Part, type Rarity, type Slot, type StatKey, type TurboBuild, type ExhaustBuild } from './types';
 
 /** Main bonus granted by a part of each rarity before slot weighting. */
 const RARITY_POWER: Readonly<Record<Rarity, number>> = {
@@ -129,18 +129,39 @@ interface Quirk {
   readonly label: string;
   readonly bonus: Readonly<Partial<Record<StatKey, number>>>;
   readonly priceFactor: number;
+  /** Garage work rather than factory parts: on a turbo, it comes with a pop-and-bang map. */
+  readonly homemade: boolean;
 }
 
 /** RPG-style affixes: a part can come out better (or dodgier) than its template. */
 const QUIRKS: readonly Quirk[] = [
-  { label: 'préparé par Dédé', bonus: { reliability: 4 }, priceFactor: 1.2 },
-  { label: 'tombé du camion', bonus: { reliability: -3 }, priceFactor: 0.7 },
-  { label: 'allégé', bonus: { accel: 2, handling: 1 }, priceFactor: 1.25 },
-  { label: 'poussé à bloc', bonus: { topSpeed: 3, reliability: -4 }, priceFactor: 1.15 },
-  { label: 'béni par mamie', bonus: { reliability: 6 }, priceFactor: 1.3 },
-  { label: 'édition tuning show', bonus: { handling: 2, topSpeed: 1 }, priceFactor: 1.25 },
-  { label: 'monté à l’envers', bonus: { handling: -2, accel: 1 }, priceFactor: 0.75 },
+  { label: 'préparé par Dédé', bonus: { reliability: 4 }, priceFactor: 1.2, homemade: true },
+  { label: 'tombé du camion', bonus: { reliability: -3 }, priceFactor: 0.7, homemade: true },
+  { label: 'allégé', bonus: { accel: 2, handling: 1 }, priceFactor: 1.25, homemade: false },
+  { label: 'poussé à bloc', bonus: { topSpeed: 3, reliability: -4 }, priceFactor: 1.15, homemade: true },
+  { label: 'béni par mamie', bonus: { reliability: 6 }, priceFactor: 1.3, homemade: false },
+  { label: 'édition tuning show', bonus: { handling: 2, topSpeed: 1 }, priceFactor: 1.25, homemade: false },
+  { label: 'monté à l’envers', bonus: { handling: -2, accel: 1 }, priceFactor: 0.75, homemade: true },
 ];
+
+const HOMEMADE_QUIRKS: ReadonlySet<string> = new Set(QUIRKS.filter((q) => q.homemade).map((q) => q.label));
+
+/** Rarities from which a turbo counts as a big one. */
+const BIG_TURBO_RARITIES: ReadonlySet<Rarity> = new Set<Rarity>(['racing', 'proto', 'legende']);
+
+const isHomemade = (part: Part): boolean => part.quirk !== undefined && HOMEMADE_QUIRKS.has(part.quirk);
+
+/** What kind of turbo a part is (undefined for any other slot). */
+export function turboBuildOf(part: Part | undefined): TurboBuild | undefined {
+  if (!part || part.slot !== 'turbo') return undefined;
+  return { big: BIG_TURBO_RARITIES.has(part.rarity), homemade: isHomemade(part) };
+}
+
+/** What kind of exhaust a part is (undefined for any other slot). */
+export function exhaustBuildOf(part: Part | undefined): ExhaustBuild | undefined {
+  if (!part || part.slot !== 'exhaust') return undefined;
+  return { rarity: part.rarity, homemade: isHomemade(part) };
+}
 
 const round1 = (n: number): number => Math.round(n);
 

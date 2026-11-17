@@ -152,7 +152,8 @@ export function engineSoundParams(input: EngineSoundInput, profile: EngineSoundP
 
   return {
     frequency: firingFrequency(input.rpm, profile),
-    gain: clamp(gain, 0, 0.17),
+    // Headroom for a loud exhaust; the bus compressor catches the peaks.
+    gain: clamp(gain, 0, 0.2),
     filterHz,
     roughness,
     limiterDepth: input.limiter ? 0.85 : 0,

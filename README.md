@@ -40,6 +40,10 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
   fait patiner). Pluie, flaques, gerbes d'eau et chaussée luisante à l'écran. La pluie nivelle :
   le favori gagne moins souvent, l'outsider a sa chance ; en échange la prime est majorée de 50 %.
   Les deux premières courses restent au sec.
+- **Contre la montre** : dans chaque quartier débloqué, trois tours seul en piste, au sec ou sous
+  la pluie, contre le fantôme de son meilleur temps (par circuit, météo et modèle de voiture). Les
+  écarts s'affichent à chaque intermédiaire (trois par tour). Rien à gagner, rien à casser : ni
+  prime, ni usure. Les records sont gardés dans le navigateur, à part de la carrière.
 - **Prise en main** : des conseils s'affichent pendant les deux premières courses (commandes,
   nitro en ligne droite, relâcher avant le rouge), et le garage indique combien de secondes de
   nitro la voiture encaisse avant la zone rouge.
@@ -122,6 +126,16 @@ virage et de freinage à partir de cette fiche) s'adaptent sans cas particulier.
 automatique, la physique est identique au bit près à celle d'avant ces mécaniques ; seul l'effet du
 départ change le résultat d'une course. Le départ de chaque adversaire est tiré d'un flux aléatoire
 propre (dérivé de la graine de la course) : la séquence aléatoire de la course n'est pas décalée.
+
+### Contre la montre
+
+`src/domain/ghost.ts` enregistre le chrono : une position toutes les 0,1 s (`GHOST_FRAME_HZ`) et le
+temps de chaque intermédiaire (`SECTORS_PER_LAP` par tour, `TIME_TRIAL_LAPS` tours). Le fantôme
+rejoue des **positions**, pas les touches : la simulation utilise `Math.sin`/`Math.exp`, que les
+moteurs JavaScript peuvent arrondir différemment, et une course re-simulée à partir des touches
+pourrait dériver d'un navigateur à l'autre. Un chrono de trois tours pèse ~9 Ko ; les records sont
+validés à la relecture (`isGhostRun`) et stockés à part de la sauvegarde
+(`ned-for-speed/ghosts/v1`), donc une nouvelle partie les garde.
 
 Réglage de l'équilibre (`scripts/winrate.ts`, 20 graines par course, Ned piloté par l'IA avec une
 habileté de 0,9, départ compris) — victoires sur 400 courses :

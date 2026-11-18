@@ -1181,6 +1181,60 @@ kbd {
   color: var(--cyan);
 }
 
+.trial-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid #2ff3ff44;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(120deg, #2ff3ff12, transparent 50%),
+    var(--panel-solid);
+}
+.trial-info {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.trial-info h4 {
+  font-size: 22px;
+}
+.trial-info p {
+  font-size: 14px;
+  color: var(--muted);
+}
+.trial-records {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.trial-records li {
+  display: grid;
+  grid-template-columns: 76px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+.trial-weather {
+  white-space: nowrap;
+  font-size: 14px;
+}
+.trial-record {
+  font-variant-numeric: tabular-nums;
+}
+.trial-big {
+  font-size: 30px;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  .trial-card {
+    grid-template-columns: 1fr;
+  }
+}
 .boss-card {
   display: grid;
   grid-template-columns: 124px 1fr auto;

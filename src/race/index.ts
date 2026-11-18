@@ -1,5 +1,6 @@
 import './race.css';
 import type { ShiftRequest } from '../domain/drivetrain';
+import { ghostPose, GhostRecorder, SECTORS_PER_LAP, splitDelta, type GhostRun } from '../domain/ghost';
 import type { LaunchEnd, LaunchGrade } from '../domain/launch';
 import type { TransmissionMode } from '../domain/tuning';
 import type { RaceOutcome, RaceSetup, Racer } from '../domain/types';
@@ -30,10 +31,21 @@ import {
   type RaceSim,
 } from './sim';
 
+/** Time trial: record Ned's run and race the stored ghost. */
+export interface TimeTrialOptions {
+  /** The record to race against, if there is one. */
+  readonly ghost: GhostRun | undefined;
+  /** Car model the run is set with (records are kept per model). */
+  readonly modelId: string;
+  /** Called once, when the race ends, with the run (undefined if not completed). */
+  readonly onRun: (run: GhostRun | undefined) => void;
+}
+
 export interface RaceOptions {
   readonly muted: boolean;
   /** Ned's gearbox; automatic when absent. */
   readonly transmission?: TransmissionMode;
+  readonly timeTrial?: TimeTrialOptions;
 }
 
 const LAUNCH_BANNERS: Readonly<Record<LaunchGrade, { text: string; sub?: string; color: string } | undefined>> = {
@@ -48,6 +60,12 @@ const LAUNCH_END_BANNERS: Partial<Record<LaunchEnd, { text: string; color: strin
 };
 
 const STEP = 1 / 120;
+
+/** "−0.32 s" / "+1.05 s": time gained (green) or lost against the record. */
+function formatDelta(delta: number): string {
+  const sign = delta < 0 ? '−' : '+';
+  return `${sign}${Math.abs(delta).toFixed(2)} s`;
+}
 const MAX_STEPS_PER_FRAME = 6;
 /** Time the final scene stays on screen before handing back to the menus. */
 const OUTRO_SECONDS = 3;
@@ -133,6 +151,14 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       .map((car) => ({ car, engine: car.isPlayer ? playerEngine : engineOf(car.racer), overrun: ON_THROTTLE }))
       .filter((banger) => banger.engine.popsAndBangs > 0);
 
+    // Time trial: record the run, and show the ghost of the record.
+    const trial = options.timeTrial;
+    const totalSectors = sim.setup.laps * SECTORS_PER_LAP;
+    const recorder = trial ? new GhostRecorder(sim.track.length, totalSectors) : undefined;
+    const ghost = trial?.ghost && trial.ghost.splits.length === totalSectors ? trial.ghost : undefined;
+    renderer.setGhost(ghost ? { look: setup.player.look, recordTime: ghost.time } : undefined);
+    /** Checkpoint crossed during the last frame's steps (shown after the events). */
+    let pendingSplit: { readonly index: number; readonly time: number } | undefined;
     let paused = false;
     const setPaused = (value: boolean): void => {
       if (sim.phase === 'finished') return;
@@ -150,6 +176,23 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       audio.stopEngine();
       window.__nedRace = undefined;
       const outcome = raceOutcome(sim, abandoned);
+      if (trial && recorder) {
+        const player = sim.player;
+        const completed = !abandoned && player.finished && !player.engine.exploded;
+        trial.onRun(
+          completed
+            ? recorder.finish({
+                trackId: sim.setup.trackId,
+                weather: sim.weather.id,
+                modelId: trial.modelId,
+                laps: sim.setup.laps,
+                time: player.finishTime ?? sim.time,
+                bestLap: player.bestLap,
+                recordedAt: new Date().toISOString(),
+              })
+            : undefined,
+        );
+      }
       host.replaceChildren();
       host.classList.remove('race-host');
       resolve(outcome);
@@ -176,6 +219,20 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     const announceEnd = (): void => {
       const player = sim.player;
       if (player.engine.exploded) return; // The explosion banner is already up.
+      if (trial && player.finished) {
+        const time = player.finishTime ?? sim.time;
+        const delta = ghost ? time - ghost.time : undefined;
+        const record = delta === undefined || delta < 0;
+        renderer.showBanner({
+          text: record ? 'NOUVEAU RECORD !' : 'ARRIVÉE',
+          sub: delta === undefined ? formatTime(time) : `${formatTime(time)} (${formatDelta(delta)})`,
+          color: record ? '#ffd23f' : '#ffffff',
+          ttl: OUTRO_SECONDS,
+          big: true,
+        });
+        audio.race('finish');
+        return;
+      }
       const position = playerPosition(sim);
       if (position === 1) {
         renderer.showBanner({ text: 'VICTOIRE !', sub: formatTime(player.finishTime ?? sim.time), color: '#ffd23f', ttl: OUTRO_SECONDS, big: true });
@@ -362,11 +419,35 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           if (debug.autopilot) controls = autopilot(sim.player, STEP);
           stepRaceSim(sim, { ...controls, shift: pendingShift }, STEP);
           pendingShift = 0;
+          // Recorded on through the outro (sim time keeps running), so the ghost
+          // carries on past the line instead of parking a frame short of it. On
+          // the step Ned crosses the line, `sim.time` is exactly his finish time.
+          if (recorder && sim.phase !== 'countdown') {
+            const p = sim.player;
+            const crossed = recorder.sample(sim.time, p.x, p.y, p.heading, p.progress);
+            if (crossed !== undefined) pendingSplit = { index: crossed, time: sim.time };
+          }
           accumulator -= STEP;
           steps++;
         }
         if (steps === MAX_STEPS_PER_FRAME) accumulator = 0;
         handleEvents();
+        // Split against the ghost (after the lap banner, which it replaces). The
+        // finish line is announced by the end banner instead.
+        if (pendingSplit && ghost && pendingSplit.index < totalSectors - 1) {
+          const delta = splitDelta(ghost, pendingSplit.index, pendingSplit.time);
+          if (delta !== undefined) {
+            renderer.showBanner({
+              text: formatDelta(delta),
+              sub: `Intermédiaire ${pendingSplit.index + 1}/${totalSectors}`,
+              color: delta <= 0 ? '#4dff6a' : '#ff5a5a',
+              ttl: 1.6,
+              big: false,
+            });
+          }
+        }
+        pendingSplit = undefined;
+        if (ghost) renderer.setGhostPose(ghostPose(ghost, sim.time));
 
         if (sim.phase === 'finished' && !endAnnounced) {
           endAnnounced = true;

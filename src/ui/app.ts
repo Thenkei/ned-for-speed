@@ -9,6 +9,7 @@ import {
   buyPart,
   canChallengeBoss,
   canEnterEvent,
+  canRunTimeTrial,
   eligibleStakes,
   equipPart,
   eventRaceSetup,
@@ -23,11 +24,14 @@ import {
   sellJewel,
   sellPart,
   setNeon,
+  timeTrialSetup,
   transferParts,
   unequipSlot,
 } from '../domain/game';
+import { beatsRecord, type GhostRun } from '../domain/ghost';
 import { jewelKind, jewelResaleValue } from '../domain/jewels';
 import { partResaleValue } from '../domain/parts';
+import type { Weather } from '../domain/tuning';
 import {
   SLOTS,
   type CarLook,
@@ -39,7 +43,7 @@ import {
 } from '../domain/types';
 import { DISTRICTS, districtById } from '../domain/world';
 import { audio, type UiSound } from '../infra/audio';
-import { loadGame, loadSettings, saveGame, saveSettings } from '../infra/storage';
+import { loadGame, loadGhost, loadSettings, saveGame, saveGhost, saveSettings } from '../infra/storage';
 import { renderCarPreview } from '../race/carSprite';
 import { runRace, type RaceOptions } from '../race/index';
 import { button } from './components';
@@ -48,6 +52,7 @@ import { renderBoss, renderPreRace } from './screens/courses';
 import { renderHub } from './screens/hub';
 import { renderResult } from './screens/result';
 import { INTRO_PANELS, renderEnding, renderIntro, renderTitle } from './screens/story';
+import { renderTrialResult } from './screens/timeTrial';
 import { TABS, type ConfirmView, type Tab, type UiState } from './view';
 
 type RaceRunner = (host: HTMLElement, setup: RaceSetup, options: RaceOptions) => Promise<RaceOutcome>;
@@ -89,6 +94,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     stakeUid: undefined,
     inventoryFilter: 'all',
     result: undefined,
+    trialResult: undefined,
     confirm: undefined,
     hasSave: game !== undefined,
     muted: settings.muted,
@@ -183,6 +189,8 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
         return '<div id="race-host" class="race-host"></div>';
       case 'result':
         return renderResult(view);
+      case 'trial-result':
+        return renderTrialResult(view);
       case 'ending':
         return renderEnding(view);
     }
@@ -275,6 +283,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
   async function runAndReport(
     setup: RaceSetup,
     apply: (outcome: RaceOutcome) => void,
+    extra: Partial<RaceOptions> = {},
   ): Promise<void> {
     if (racing) return;
     racing = true;
@@ -290,7 +299,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     try {
       if (!host) throw new Error('race host missing');
       const runner = window.__ned?.raceOverride ?? runRace;
-      outcome = await runner(host, setup, { muted: ui.muted, transmission: ui.transmission });
+      outcome = await runner(host, setup, { ...extra, muted: ui.muted, transmission: ui.transmission });
     } catch (error) {
       console.error('[race] the race crashed, nothing was applied', error);
     } finally {
@@ -359,6 +368,33 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
       };
       showResult(applied.value.report.won, applied.value.report.jewelWon !== undefined);
     });
+  }
+
+  /**
+   * Time trial on the selected district's track. Nothing touches the career:
+   * the only thing kept is the record (and its ghost), per track, weather and car.
+   */
+  function launchTimeTrial(weather: Weather): void {
+    const state = requireGame();
+    const district = districtById(ui.districtId);
+    const allowed = canRunTimeTrial(state, district);
+    if (!allowed.ok) return fail(allowed.error);
+    const modelId = activeCar(state).modelId;
+    const previous = loadGhost(district.trackId, weather, modelId);
+    let run: GhostRun | undefined;
+
+    void runAndReport(
+      timeTrialSetup(state, district, weather),
+      (outcome) => {
+        const newRecord = run !== undefined && beatsRecord(run, previous);
+        const saved = newRecord && run !== undefined ? saveGhost(run) : false;
+        ui.trialResult = { districtId: district.id, weather, outcome, run, previous, newRecord, saved };
+        ui.screen = 'trial-result';
+        render();
+        audio.ui(newRecord ? 'win' : 'click');
+      },
+      { timeTrial: { ghost: previous, modelId, onRun: (recorded) => (run = recorded) } },
+    );
   }
 
   // ───────────────────────── Actions ─────────────────────────
@@ -470,6 +506,11 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     'boss-back': () => go({ screen: 'hub' }),
     stake: (el) => go({ stakeUid: el.dataset['uid'] }),
     'boss-go': launchBoss,
+    'time-trial': (el) => {
+      const weather = el.dataset['weather'];
+      if (weather === 'dry' || weather === 'wet') launchTimeTrial(weather);
+    },
+    'trial-back': () => go({ screen: 'hub', tab: 'courses' }),
 
     // ── Result ──
     'result-continue': () => {

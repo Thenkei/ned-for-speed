@@ -25,6 +25,8 @@ import {
   type ExhaustBuild,
   type TurboBuild,
 } from './types';
+import { TIME_TRIAL_LAPS } from './ghost';
+import type { Weather } from './tuning';
 import { forecastWeather, weatherProfile } from './weather';
 import { DISTRICTS, districtIndex } from './world';
 
@@ -406,6 +408,33 @@ export function eventRaceSetup(state: GameState, district: District, event: Race
     // Ned learns the controls on a dry road; after that the sky decides.
     weather: coach ? 'dry' : forecastWeather(seed),
   };
+}
+
+/**
+ * A time trial: Ned alone on a district's track, the weather of his choice.
+ * Nothing is at stake (no fee, no prize, no wear): the run is only measured.
+ * The seed is fixed per track so a run never depends on when it is started.
+ */
+export function timeTrialSetup(state: GameState, district: District, weather: Weather): RaceSetup {
+  let seed = 0x1f2e3d4c;
+  for (let i = 0; i < district.trackId.length; i++) seed = Math.imul(seed ^ district.trackId.charCodeAt(i), 0x01000193) >>> 0;
+  return {
+    title: `Chrono : ${district.name}`,
+    trackId: district.trackId,
+    theme: district.theme,
+    laps: TIME_TRIAL_LAPS,
+    player: playerRacer(state),
+    rivals: [],
+    seed,
+    weather,
+  };
+}
+
+/** Whether the active car can be taken out for a time trial. */
+export function canRunTimeTrial(state: GameState, district: District): Result<true> {
+  if (!isDistrictUnlocked(state, district)) return err('Ce quartier n’est pas encore débloqué.');
+  if (activeCar(state).condition <= 0) return err('Ton moteur est HS. Passe au garage d’abord.');
+  return ok(true);
 }
 
 export function bossRaceSetup(state: GameState, district: District): RaceSetup {

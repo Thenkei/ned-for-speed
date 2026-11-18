@@ -1,8 +1,11 @@
-import type { TransmissionMode } from '../domain/tuning';
+import { ghostKey, isGhostRun, type GhostRun } from '../domain/ghost';
+import type { TransmissionMode, Weather } from '../domain/tuning';
 import type { GameState } from '../domain/types';
 
 const SAVE_KEY = 'ned-for-speed/save/v1';
 const SETTINGS_KEY = 'ned-for-speed/settings/v1';
+/** Time trial records live apart from the career: a new game keeps them. */
+const GHOSTS_KEY = 'ned-for-speed/ghosts/v1';
 
 export interface Settings {
   readonly muted: boolean;
@@ -80,5 +83,52 @@ export function saveSettings(settings: Settings): void {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch (error) {
     console.warn('[save] could not write settings', error);
+  }
+}
+
+// ───────────────────────── Time trial records ─────────────────────────
+
+/** Parsed records, kept in memory: the course list reads them on every render. */
+let ghostCache: Record<string, GhostRun> | undefined;
+
+/** Every stored record that passes validation, by `ghostKey`. Corrupt entries are dropped. */
+function readGhosts(): Record<string, GhostRun> {
+  if (ghostCache) return ghostCache;
+  ghostCache = parseGhosts();
+  return ghostCache;
+}
+
+function parseGhosts(): Record<string, GhostRun> {
+  try {
+    const raw = localStorage.getItem(GHOSTS_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    const valid: Record<string, GhostRun> = {};
+    for (const [key, run] of Object.entries(parsed)) {
+      if (isGhostRun(run) && key === ghostKey(run.trackId, run.weather, run.modelId)) valid[key] = run;
+    }
+    return valid;
+  } catch (error) {
+    console.warn('[save] could not read time trial records', error);
+    return {};
+  }
+}
+
+export function loadGhost(trackId: string, weather: Weather, modelId: string): GhostRun | undefined {
+  return readGhosts()[ghostKey(trackId, weather, modelId)];
+}
+
+/** Stores a record (replacing the previous one for its track, weather and car). Returns false if storage failed. */
+export function saveGhost(run: GhostRun): boolean {
+  try {
+    const all = { ...readGhosts(), [ghostKey(run.trackId, run.weather, run.modelId)]: run };
+    localStorage.setItem(GHOSTS_KEY, JSON.stringify(all));
+    ghostCache = all;
+    return true;
+  } catch (error) {
+    // Quota or private mode: the run still counts on screen, it is just not kept.
+    console.warn('[save] could not write time trial record', error);
+    return false;
   }
 }

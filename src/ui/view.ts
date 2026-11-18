@@ -1,8 +1,9 @@
 import type { RaceReport } from '../domain/game';
-import type { TransmissionMode } from '../domain/tuning';
+import type { GhostRun } from '../domain/ghost';
+import type { TransmissionMode, Weather } from '../domain/tuning';
 import type { GameState, RaceOutcome, Slot } from '../domain/types';
 
-export type Screen = 'title' | 'intro' | 'hub' | 'prerace' | 'boss' | 'race' | 'result' | 'ending';
+export type Screen = 'title' | 'intro' | 'hub' | 'prerace' | 'boss' | 'race' | 'result' | 'trial-result' | 'ending';
 
 export const TABS = ['courses', 'garage', 'pieces', 'concession', 'bijouterie', 'respect'] as const;
 export type Tab = (typeof TABS)[number];
@@ -25,6 +26,20 @@ export interface ResultView {
   readonly bossId: string | undefined;
 }
 
+/** Outcome of a time trial (nothing is applied to the career). */
+export interface TrialResultView {
+  readonly districtId: string;
+  readonly weather: Weather;
+  readonly outcome: RaceOutcome;
+  /** The completed run, undefined if abandoned or the engine blew. */
+  readonly run: GhostRun | undefined;
+  /** The record before this run. */
+  readonly previous: GhostRun | undefined;
+  readonly newRecord: boolean;
+  /** False when the new record could not be written to storage. */
+  readonly saved: boolean;
+}
+
 export interface ConfirmView {
   readonly title: string;
   readonly body: string;
@@ -44,6 +59,7 @@ export interface UiState {
   stakeUid: string | undefined;
   inventoryFilter: Slot | 'all';
   result: ResultView | undefined;
+  trialResult: TrialResultView | undefined;
   confirm: ConfirmView | undefined;
   hasSave: boolean;
   muted: boolean;

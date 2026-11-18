@@ -17,6 +17,7 @@ import { DISTRICTS, districtById, districtIndex } from '../../domain/world';
 import { backdropStyle, button, carCanvas, jewelCard, picture } from '../components';
 import { esc, euro, num, plural } from '../dom';
 import type { View } from '../view';
+import { timeTrialCard } from './timeTrial';
 
 // ───────────────────────── Helpers ─────────────────────────
 
@@ -143,7 +144,8 @@ function districtDetail(game: GameState, district: District): string {
   const body = unlocked
     ? `
       <div class="events">${district.events.map((e) => eventCard(game, e, pi)).join('')}</div>
-      ${bossCard(game, district, pi)}`
+      ${bossCard(game, district, pi)}
+      ${timeTrialCard(game, district)}`
     : `
       <div class="locked-panel">
         <span class="locked-icon">🔒</span>

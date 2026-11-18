@@ -1,7 +1,9 @@
 import { KMH_PER_PX_S, MAX_HEAT } from '../domain/engine';
 import { overRevThreshold } from '../domain/launch';
+import type { GhostPose } from '../domain/ghost';
 import { createRng } from '../domain/rng';
 import { LAUNCH_TUNING } from '../domain/tuning';
+import type { CarLook } from '../domain/types';
 import { BODY_SHAPES, drawCar, rgba } from './carSprite';
 import { buildScenery, createSpeckPattern, drawSceneryItem, type Scenery } from './scenery';
 import { playerPosition, rankCars, type CarSim, type RaceSim } from './sim';
@@ -96,6 +98,9 @@ export class RaceRenderer {
   private dpr = 1;
   private banner: Banner | undefined;
   private hint: string | undefined;
+  /** Time trial: the record's car and where its ghost is now. */
+  private ghost: { readonly look: CarLook; readonly recordTime: number } | undefined;
+  private ghostPose: GhostPose | undefined;
   private readonly wet: boolean;
   private readonly puddles: Puddle[] = [];
   private readonly drops: Drop[] = [];
@@ -188,6 +193,16 @@ export class RaceRenderer {
     this.height = Math.max(1, cssHeight);
     this.canvas.width = Math.round(this.width * dpr);
     this.canvas.height = Math.round(this.height * dpr);
+  }
+
+  /** Time trial: race against a ghost of `look` whose record is `recordTime` (undefined: no ghost). */
+  setGhost(ghost: { readonly look: CarLook; readonly recordTime: number } | undefined): void {
+    this.ghost = ghost;
+    this.ghostPose = undefined;
+  }
+
+  setGhostPose(pose: GhostPose | undefined): void {
+    this.ghostPose = pose;
   }
 
   showBanner(banner: Banner): void {
@@ -639,6 +654,17 @@ export class RaceRenderer {
     }
     ctx.restore();
 
+    // The ghost: translucent, under the real cars, and never collides with anything.
+    const pose = this.ghostPose;
+    if (this.ghost && pose && visible(pose.x, pose.y, 60)) {
+      ctx.save();
+      ctx.globalAlpha = 0.38;
+      ctx.translate(pose.x, pose.y);
+      ctx.rotate(pose.heading);
+      drawCar(ctx, { ...this.ghost.look, neon: '#2ff3ff' }, { time: this.clock });
+      ctx.restore();
+    }
+
     // The player is drawn last so it is never hidden.
     const ordered = [...sim.cars].sort((a, b) => Number(a.isPlayer) - Number(b.isPlayer));
     for (const car of ordered) {
@@ -809,7 +835,12 @@ export class RaceRenderer {
     const lap = clamp(player.lap + 1, 1, sim.setup.laps);
     this.text(`TOUR ${lap}/${sim.setup.laps}`, pad, pad + 76 * scale, 22 * scale, '#2ff3ff');
     this.text(formatTime(sim.time), pad, pad + 102 * scale, 20 * scale, '#ffffff', 'left', 700);
-    if (this.wet) this.text('🌧 PLUIE', pad, pad + 126 * scale, 16 * scale, '#9ab4ff', 'left', 700);
+    let infoY = pad + 126 * scale;
+    if (this.ghost) {
+      this.text(`RECORD ${formatTime(this.ghost.recordTime)}`, pad, infoY, 16 * scale, '#ffd23f', 'left', 700);
+      infoY += 22 * scale;
+    }
+    if (this.wet) this.text('🌧 PLUIE', pad, infoY, 16 * scale, '#9ab4ff', 'left', 700);
 
     // Running order.
     const ranked = rankCars(sim);

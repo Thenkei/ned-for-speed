@@ -67,7 +67,7 @@ function repairBlock(game: GameState, car: OwnedCar): string {
       ${button({ action: 'repair', label: `🔧 Réparer (${esc(euro(cost))})`, variant: 'cyan', dim: true })}
       <span class="hint">Pas assez de thunes pour l’instant. Elle roule encore, va gagner une course.</span>`;
   }
-  const dead = car.condition <= 0 ? '<p class="dead-note">💥 Moteur explosé. Interdiction de courir tant qu’il n’est pas réparé.</p>' : '';
+  const dead = car.condition <= 0 ? '<p class="dead-note">💥 Moteur HS. Interdiction de courir tant qu’il n’est pas réparé.</p>' : '';
   return `
     <div class="panel repair">
       <h4>État du moteur</h4>

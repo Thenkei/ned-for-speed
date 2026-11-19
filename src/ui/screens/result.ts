@@ -1,3 +1,4 @@
+import { isClassified } from '../../domain/game';
 import { jewelKind } from '../../domain/jewels';
 import { districtById } from '../../domain/world';
 import { backdropStyle, button, conditionGauge, jewelCard, partCard, picture } from '../components';
@@ -12,7 +13,7 @@ interface Headline {
 
 function headline(result: ResultView): Headline {
   const { report } = result;
-  if (report.exploded) {
+  if (report.exploded && result.outcome.explosionCause !== 'burnout') {
     if (result.outcome.explosionCause === 'wall') {
       return { big: '💥 Dans le mur.', sub: 'Ta caisse a explosé sous le choc.', tone: 'boom' };
     }
@@ -40,13 +41,11 @@ function standingsTable(result: ResultView): string {
     .slice()
     .sort((a, b) => a.position - b.position)
     .map((standing) => {
-      const time = standing.exploded
-        ? (standing.explosionCause === 'wall' ? '💥 Dans le mur' : '💥 Moteur explosé')
-        : standing.time === undefined
-          ? 'Non classé'
-          : raceTime(standing.time);
+      const time = standing.time !== undefined ? raceTime(standing.time)
+        : standing.exploded ? (standing.explosionCause === 'wall' ? '💥 Dans le mur' : '💥 Moteur explosé')
+        : 'Non classé';
       return `
-        <li class="${standing.isPlayer ? 'me' : ''}${standing.exploded ? ' out' : ''}">
+        <li class="${standing.isPlayer ? 'me' : ''}${standing.exploded && standing.time === undefined ? ' out' : ''}">
           <span class="pos">${esc(standing.position)}</span>
           <span class="who">${esc(standing.name)}</span>
           <span class="time">${esc(time)}</span>
@@ -87,7 +86,7 @@ export function renderResult(view: View): string {
   const engineBlock = report.exploded
     ? `
       <div class="result-block engine boom">
-        <p class="kicker danger">💥 ${outcome.explosionCause === 'wall' ? 'Voiture accidentée' : 'Ton moteur a explosé !'}</p>
+        <p class="kicker danger">💥 ${outcome.explosionCause === 'burnout' ? 'Moteur serré pendant le burnout' : outcome.explosionCause === 'wall' ? 'Voiture accidentée' : 'Ton moteur a explosé !'}</p>
         ${conditionGauge(report.conditionAfter)}
         <p>Il faut passer au garage avant la prochaine course. Si tu es à sec, Tonton Gégé te le rafistolera contre ce qu’il te reste.</p>
       </div>`
@@ -96,7 +95,7 @@ export function renderResult(view: View): string {
       <div class="result-block engine">
         <p class="kicker">🌡️ Usure moteur : −${wear} point${wear > 1 ? 's' : ''}</p>
         ${conditionGauge(report.conditionAfter)}
-        <p>Rouler dans le rouge, ça laisse des traces. Un moteur fatigué surchauffe plus tôt.</p>
+        <p>${outcome.didBurnout ? 'Le burnout à l’arrivée a usé le moteur.' : 'Rouler dans le rouge, ça laisse des traces. Un moteur fatigué surchauffe plus tôt.'}</p>
       </div>`
       : '';
 
@@ -139,7 +138,7 @@ export function renderResult(view: View): string {
     : '';
 
   const facts = [
-    outcome.abandoned || outcome.exploded ? '' : `<span>⏱️ ${esc(raceTime(outcome.time))}</span>`,
+    !isClassified(outcome) ? '' : `<span>⏱️ ${esc(raceTime(outcome.time))}</span>`,
     outcome.bestLap === undefined ? '' : `<span>⚡ Meilleur tour ${esc(raceTime(outcome.bestLap))}</span>`,
     `<span>🚀 Pointe à ${esc(num(outcome.topSpeedKmh))} km/h</span>`,
   ].join('');

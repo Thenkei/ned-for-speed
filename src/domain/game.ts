@@ -491,10 +491,16 @@ export interface RaceReport {
   readonly gameCompleted: boolean;
 }
 
+/** A blown engine after the flag keeps the place already earned. */
+export function isClassified(outcome: RaceOutcome): boolean {
+  return !outcome.abandoned && (!outcome.exploded || outcome.explosionCause === 'burnout');
+}
+
 function conditionAfterRace(car: OwnedCar, outcome: RaceOutcome): number {
   if (outcome.exploded) return 0;
-  // Overheating alone never kills the engine outright: it bottoms out at 5 %.
-  return Math.max(5, Math.round(car.condition - outcome.wear));
+  // Racing heat normally bottoms out at 5%. A burnout can consume the remaining condition.
+  const floor = outcome.didBurnout ? 1 : Math.min(5, car.condition);
+  return Math.max(floor, Math.round(car.condition - outcome.wear));
 }
 
 export function applyEventOutcome(
@@ -503,10 +509,10 @@ export function applyEventOutcome(
   outcome: RaceOutcome,
 ): { state: GameState; report: RaceReport } {
   const car = activeCar(state);
-  const won = outcome.position === 1 && !outcome.exploded && !outcome.abandoned;
+  const won = outcome.position === 1 && isClassified(outcome);
   const previousWins = state.eventWins[event.id] ?? 0;
   const firstWin = won && previousWins === 0;
-  const classified = !outcome.exploded && !outcome.abandoned;
+  const classified = isClassified(outcome);
 
   const share = classified ? (PRIZE_SHARE_BY_POSITION[outcome.position - 1] ?? 0) : 0;
   const repeatFactor = previousWins > 0 ? 0.6 : 1;
@@ -569,7 +575,7 @@ export function applyBossOutcome(
   if (jewelKind(stake.kindId).value < boss.minStake) return err('Ce bijou ne vaut pas assez.');
 
   const car = activeCar(state);
-  const won = outcome.position === 1 && !outcome.exploded && !outcome.abandoned;
+  const won = outcome.position === 1 && isClassified(outcome);
   const firstWin = won && !state.bossesBeaten.includes(boss.id);
   const conditionAfter = conditionAfterRace(car, outcome);
 

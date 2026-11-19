@@ -37,6 +37,7 @@ import { createRng, type Rng } from '../domain/rng';
 import { WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
 import { applyWeather, weatherProfile } from '../domain/weather';
 import type { PanelMark, RaceOutcome, RaceSetup, RaceStanding, Racer } from '../domain/types';
+import { planFinishStop, stepFinishStop, type FinishStop } from './finishStop';
 import { BODY_SHAPES, recordMark } from './carBody';
 import { locate, maxCurvature, sampleAt, sampleAtDistance, trackById, type Track } from './track';
 
@@ -56,6 +57,8 @@ export interface Controls {
   nitro: boolean;
   /** Manual gearbox: one gear up / down, applied on a single step. */
   shift?: ShiftRequest;
+  /** Hold after the flag to do a burnout. */
+  burnout?: boolean;
 }
 
 export type SimEvent =
@@ -111,6 +114,7 @@ export interface CarSim {
   progress: number;
   finished: boolean;
   finishTime: number | undefined;
+  finishStop?: FinishStop;
   lapStartTime: number;
   bestLap: number | undefined;
   topSpeed: number;
@@ -302,7 +306,7 @@ function aiDriving(sim: RaceSim, car: CarSim, ai: AiState, dt: number): Controls
     ai.laneTimer = sim.rng.range(2, 5);
   }
   for (const other of sim.cars) {
-    if (other === car) continue;
+    if (other === car || other.finishStop) continue;
     let gap = other.s - car.s;
     if (gap < -track.length / 2) gap += track.length;
     if (gap > track.length / 2) gap -= track.length;
@@ -536,6 +540,7 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   if (!car.finished && !car.engine.exploded && car.progress >= sim.setup.laps * track.length) {
     car.finished = true;
     car.finishTime = sim.time;
+    car.finishStop = planFinishStop(sim, car, sim.firstFinishTime === undefined);
     if (sim.firstFinishTime === undefined) sim.firstFinishTime = sim.time;
     sim.events.push({ type: 'finish', carId: car.id });
   }
@@ -641,6 +646,7 @@ function resolveCollisions(sim: RaceSim): void {
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i] as CarSim;
       const b = cars[j] as CarSim;
+      if (a.finishStop || b.finishStop) continue;
       if (Math.abs(a.x - b.x) > 60 || Math.abs(a.y - b.y) > 60) continue;
       const shapeA = BODY_SHAPES[a.racer.look.body];
       const shapeB = BODY_SHAPES[b.racer.look.body];
@@ -740,13 +746,16 @@ export function stepRaceSim(sim: RaceSim, playerInput: Controls, dt: number): vo
   sim.time += dt;
 
   for (const car of sim.cars) {
+    // Give nearby rivals time to cross. Stragglers pull over where the race was called.
+    if (sim.phase === 'finished' && !car.finishStop && !car.engine.exploded && sim.finishedFor >= 1.5) {
+      car.finishStop = planFinishStop(sim, car, false);
+    }
+    if (car.finishStop) {
+      stepFinishStop(sim, car, car.finishStop, playerInput.burnout === true, dt);
+      continue;
+    }
     let controls: Controls;
-    if (car.finished) {
-      // Cool-down lap: keep following the road, off the throttle.
-      controls = car.ai
-        ? { ...aiControls(sim, car, car.ai, dt), throttle: 0.25, nitro: false }
-        : { throttle: 0, brake: 0.35, steer: playerInput.steer, nitro: false };
-    } else if (car.ai) {
+    if (car.ai) {
       controls = aiControls(sim, car, car.ai, dt);
       // A rival that is wedged somewhere gets put back on the road.
       car.ai.stuckTime = Math.abs(car.speed) < 18 && !car.engine.exploded ? car.ai.stuckTime + dt : 0;
@@ -805,6 +814,7 @@ export function raceOutcome(sim: RaceSim, abandoned: boolean): RaceOutcome {
     time: player.finishTime ?? sim.time,
     topSpeedKmh: Math.round(player.topSpeed),
     wear: player.engine.wear,
+    ...((player.finishStop?.burnSeconds ?? 0) > 0 && { didBurnout: true }),
     bodyDamage: [...player.bodyDamage],
     standings,
     weather: sim.weather.id,

@@ -213,3 +213,24 @@
   outline: 2px solid white;
   outline-offset: 3px;
 }
+
+.race-burnout {
+  position: absolute;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 2px;
+  padding: 9px 18px;
+  border: 1px solid #ff9a2f;
+  border-radius: 8px;
+  background: #171126;
+  color: #fff;
+  font: 16px "Helvetica Neue", Arial, sans-serif;
+  white-space: nowrap;
+  touch-action: none;
+  cursor: pointer;
+}
+
+.race-burnout small { color: #ffc88c; }
+.race-burnout:active { background: #552831; }

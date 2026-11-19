@@ -44,6 +44,7 @@ export interface RaceInput {
   /** True once, the frame after the player asked for it. */
   consumePause(): boolean;
   consumeReset(): boolean;
+  showFinishControls(): void;
   /** Gear change requested since the last call (the latest wins). */
   consumeShift(): ShiftRequest;
   dispose(): void;
@@ -57,6 +58,9 @@ export interface RaceInputOptions {
 export function createRaceInput(host: HTMLElement, options: RaceInputOptions = { manualGearbox: false }): RaceInput {
   const keys: KeyState = { up: false, down: false, left: false, right: false, nitro: false };
   const touch: KeyState = { up: false, down: false, left: false, right: false, nitro: false };
+  let burnButton: HTMLButtonElement | undefined;
+  let keyBurn = false;
+  let pointerBurn = false;
   let pauseRequested = false;
   let resetRequested = false;
   let shiftRequested: ShiftRequest = 0;
@@ -64,6 +68,11 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
   const { signal } = abort;
 
   const onKey = (down: boolean) => (event: KeyboardEvent) => {
+    if (burnButton && event.code === 'KeyB') {
+      if (!event.repeat) keyBurn = down;
+      event.preventDefault();
+      return;
+    }
     const binding = KEY_BINDINGS[event.code];
     if (binding) {
       keys[binding] = down;
@@ -91,6 +100,7 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
   window.addEventListener(
     'blur',
     () => {
+      keyBurn = pointerBurn = false;
       keys.up = keys.down = keys.left = keys.right = keys.nitro = false;
     },
     { signal },
@@ -166,12 +176,39 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
 
   return {
     touch: isTouch,
+    showFinishControls(): void {
+      if (burnButton) return;
+      pad?.remove();
+      const button = document.createElement('button');
+      burnButton = button;
+      button.type = 'button';
+      button.className = 'race-burnout';
+      button.innerHTML = `<strong>${isTouch ? 'Maintenir pour un burnout' : 'Burnout · maintenir B'}</strong><small>Risque de casse moteur</small>`;
+      button.addEventListener('pointerdown', event => {
+        if (!event.isPrimary || event.button !== 0) return;
+        event.preventDefault();
+        button.setPointerCapture(event.pointerId);
+        pointerBurn = true;
+      }, { signal });
+      button.addEventListener('lostpointercapture', () => { pointerBurn = false; }, { signal });
+      const holdKey = (down: boolean) => (event: KeyboardEvent) => {
+        if (event.code !== 'Space' && event.code !== 'Enter') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) keyBurn = down;
+      };
+      button.addEventListener('keydown', holdKey(true), { signal });
+      button.addEventListener('keyup', holdKey(false), { signal });
+      button.addEventListener('blur', () => { keyBurn = false; }, { signal });
+      host.append(button);
+    },
     read(): Controls {
       const left = keys.left || touch.left;
       const right = keys.right || touch.right;
       const brake = keys.down || touch.down;
       const throttle = keys.up || (isTouch && !brake);
       return {
+        burnout: keyBurn || pointerBurn,
         throttle: throttle ? 1 : 0,
         brake: brake ? 1 : 0,
         steer: (right ? 1 : 0) - (left ? 1 : 0),
@@ -196,6 +233,7 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
     dispose(): void {
       abort.abort();
       pad?.remove();
+      burnButton?.remove();
     },
   };
 }

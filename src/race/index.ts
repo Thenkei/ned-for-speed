@@ -70,6 +70,7 @@ function formatDelta(delta: number): string {
 const MAX_STEPS_PER_FRAME = 6;
 /** Time the final scene stays on screen before handing back to the menus. */
 const OUTRO_SECONDS = 3;
+const FINISH_SHOW_SECONDS = 5.5;
 
 /** Handle on the running race for automated tests and the dev harness (`window.__nedRace`). */
 interface RaceDebugHandle {
@@ -179,7 +180,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       const outcome = raceOutcome(sim, abandoned);
       if (trial && recorder) {
         const player = sim.player;
-        const completed = !abandoned && player.finished && !player.engine.exploded;
+        const completed = !abandoned && player.finished;
         trial.onRun(
           completed
             ? recorder.finish({
@@ -228,7 +229,6 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       let cursor = history.start;
       let previous = cursor - 1e-8;
       playReplay = elapsed => {
-        if (document.hidden) return;
         if (leadIn > 0) {
           leadIn -= elapsed;
           if (leadIn > 0) {
@@ -274,6 +274,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     const announceEnd = (): void => {
       const player = sim.player;
       if (player.engine.exploded) return; // The explosion banner is already up.
+      if (player.finished) input.showFinishControls();
       if (trial && player.finished) {
         const time = player.finishTime ?? sim.time;
         const delta = ghost ? time - ghost.time : undefined;
@@ -319,6 +320,11 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
             renderer.explode(car);
             audio.race('explosion');
             if (car.isPlayer) {
+              if (car.engine.explosionCause === 'burnout') {
+                input.dispose();
+                renderer.showBanner({ text: 'MOTEUR SERRÉ !', sub: 'Le classement est acquis. Le moteur, lui, a lâché.', color: '#ff753b', ttl: 2, big: true });
+                break;
+              }
               const wall = car.engine.explosionCause === 'wall';
               renderer.showBanner({
                 text: wall ? 'VOITURE PULVÉRISÉE !' : 'MOTEUR EXPLOSÉ !',
@@ -460,6 +466,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       try {
         const elapsed = Math.min(0.1, (now - last) / 1000);
         last = now;
+        if (document.hidden && sim.phase === 'finished') return;
         if (playReplay) {
           playReplay(elapsed);
           return;
@@ -604,7 +611,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         renderer.setHint(debug.hint);
         renderer.render(elapsed);
 
-        if (sim.phase === 'finished' && sim.finishedFor > OUTRO_SECONDS) finish(false);
+        if (sim.phase === 'finished' && sim.finishedFor > (player.finished ? FINISH_SHOW_SECONDS : OUTRO_SECONDS)) finish(false);
       } catch (error) {
         // A rendering bug must not trap the player in a frozen full-screen canvas.
         disposed = true;

@@ -260,7 +260,7 @@ export interface RaceSetup {
   readonly weather?: Weather;
 }
 
-export type ExplosionCause = 'overheat' | 'wall';
+export type ExplosionCause = 'overheat' | 'wall' | 'burnout';
 
 export interface RaceStanding {
   readonly name: string;
@@ -285,7 +285,8 @@ export interface RaceOutcome {
   readonly time: number;
   readonly bestLap?: number;
   readonly topSpeedKmh: number;
-  /** Engine condition points lost during the race (overheating). */
+  readonly didBurnout?: boolean;
+  /** Condition points lost to overheating or a finish-line burnout. */
   readonly wear: number;
   readonly standings: readonly RaceStanding[];
   /** Weather the race was run in (absent on old saves/tests: dry). Wet races pay more. */

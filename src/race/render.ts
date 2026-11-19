@@ -4,11 +4,12 @@ import type { GhostPose } from '../domain/ghost';
 import { createRng } from '../domain/rng';
 import { LAUNCH_TUNING } from '../domain/tuning';
 import type { CarLook } from '../domain/types';
+import { RaceBanter, type RaceQuote } from './banter';
 import type { ReplayCar } from './crashReplay';
 import { BODY_SHAPES } from './carBody';
 import { drawCar, rgba } from './carSprite';
 import { buildScenery, createSpeckPattern, drawSceneryItem, type Scenery } from './scenery';
-import { playerPosition, rankCars, type CarSim, type RaceSim } from './sim';
+import { rankCars, type CarSim, type RaceSim } from './sim';
 import type { Track } from './track';
 
 /** Everything visual about a race. Owns no game rules: it only reads the simulation. */
@@ -79,6 +80,7 @@ export function formatTime(seconds: number): string {
 export class RaceRenderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly track: Track;
+  private readonly banter: RaceBanter;
   private readonly scenery: Scenery;
   private readonly roadPath: Path2D;
   private readonly lanePaths: Path2D[];
@@ -118,6 +120,7 @@ export class RaceRenderer {
     if (!ctx) throw new Error('Canvas 2D indisponible');
     this.ctx = ctx;
     this.track = sim.track;
+    this.banter = new RaceBanter(sim);
     this.scenery = buildScenery(sim.track, sim.setup.theme);
     this.camX = sim.player.x;
     this.camY = sim.player.y;
@@ -721,9 +724,12 @@ export class RaceRenderer {
         ctx.textAlign = 'center';
         ctx.lineWidth = 3;
         ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-        ctx.strokeText(car.racer.name, 0, 0);
+        const live = this.sim.cars[car.id];
+        const celebrating = car === live && live.finishStop?.showoff && live.wheelspin > 0;
+        const name = celebrating ? `${car.racer.name} · ${this.banter.victoryLine}` : car.racer.name;
+        ctx.strokeText(name, 0, 0);
         ctx.fillStyle = car.engine.exploded ? '#9a9a9a' : '#ffffff';
-        ctx.fillText(car.racer.name, 0, 0);
+        ctx.fillText(name, 0, 0);
         ctx.restore();
       }
     }
@@ -859,13 +865,14 @@ export class RaceRenderer {
     ctx.textBaseline = 'alphabetic';
 
     // Position, lap, clock.
-    const position = playerPosition(sim);
+    const ranked = rankCars(sim);
+    const position = ranked.indexOf(player) + 1;
     this.text(ordinal(position), pad, pad + 44 * scale, 54 * scale, position === 1 ? '#ffd23f' : '#ffffff');
     const positionWidth = ctx.measureText(ordinal(position)).width;
     this.text(`/ ${sim.cars.length}`, pad + positionWidth + 8, pad + 44 * scale, 24 * scale, '#b9b4d6');
     const lap = clamp(player.lap + 1, 1, sim.setup.laps);
     this.text(`TOUR ${lap}/${sim.setup.laps}`, pad, pad + 76 * scale, 22 * scale, '#2ff3ff');
-    this.text(formatTime(sim.time), pad, pad + 102 * scale, 20 * scale, '#ffffff', 'left', 700);
+    this.text(formatTime(player.finishTime ?? sim.time), pad, pad + 102 * scale, 20 * scale, '#ffffff', 'left', 700);
     let infoY = pad + 126 * scale;
     if (this.ghost) {
       this.text(`RECORD ${formatTime(this.ghost.recordTime)}`, pad, infoY, 16 * scale, '#ffd23f', 'left', 700);
@@ -874,7 +881,6 @@ export class RaceRenderer {
     if (this.wet) this.text('🌧 PLUIE', pad, infoY, 16 * scale, '#9ab4ff', 'left', 700);
 
     // Running order.
-    const ranked = rankCars(sim);
     ranked.forEach((car, index) => {
       const y = pad + 22 * scale + index * 22 * scale;
       const label = `${index + 1}. ${car.racer.name}${car.engine.exploded ? ' 💥' : car.finished ? ' 🏁' : ''}`;
@@ -883,8 +889,39 @@ export class RaceRenderer {
 
     this.drawGauges(scale, pad);
     this.drawMinimap(scale, pad);
+    const quote = this.banter.update(sim, ranked);
+    if (quote) this.drawQuote(quote, scale);
     this.drawMessages(scale);
     this.drawHint(scale);
+  }
+
+  private drawQuote(quote: RaceQuote, scale: number): void {
+    const { ctx } = this;
+    const cx = this.width / 2;
+    const compact = this.width < 500;
+    const top = compact ? Math.max(118, 23 + this.sim.cars.length * 18) : Math.max(52, this.height * 0.09);
+    const color = quote.speaker.isPlayer ? '#ffd23f' : '#2ff3ff';
+    const names = `${quote.speaker.racer.name} → ${quote.listener.racer.name}`;
+    ctx.save();
+    ctx.font = `italic 700 ${13 * scale}px ${FONT}`;
+    const nameWidth = ctx.measureText(names).width;
+    const font = `italic 700 ${19 * scale}px ${FONT}`;
+    ctx.font = font;
+    const maxWidth = this.width - 48;
+    const width = Math.min(maxWidth, Math.max(nameWidth, ctx.measureText(quote.text).width));
+    ctx.globalAlpha = clamp((quote.until - this.sim.time) / 0.18, 0, 1);
+    ctx.fillStyle = 'rgba(12, 9, 26, 0.9)';
+    ctx.beginPath();
+    ctx.roundRect(cx - width / 2 - 12, top, width + 24, 49 * scale, 6);
+    ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.font = `italic 700 ${13 * scale}px ${FONT}`;
+    ctx.fillStyle = color;
+    ctx.fillText(names, cx, top + 17 * scale, maxWidth);
+    ctx.font = font;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(quote.text, cx, top + 38 * scale, maxWidth);
+    ctx.restore();
   }
 
   private drawHint(scale: number): void {

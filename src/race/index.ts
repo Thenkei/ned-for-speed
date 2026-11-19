@@ -264,7 +264,12 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
             renderer.explode(car);
             audio.race('explosion');
             if (car.isPlayer) {
-              renderer.showBanner({ text: 'MOTEUR EXPLOSÉ !', sub: 'Trop de nitro tue la nitro.', color: '#ff3b3b', ttl: OUTRO_SECONDS + 1, big: true });
+              const wall = car.engine.explosionCause === 'wall';
+              renderer.showBanner({
+                text: wall ? 'VOITURE PULVÉRISÉE !' : 'MOTEUR EXPLOSÉ !',
+                sub: wall ? 'Le choc contre le mur a été fatal.' : 'Trop de nitro tue la nitro.',
+                color: '#ff3b3b', ttl: OUTRO_SECONDS + 1, big: true,
+              });
             } else {
               renderer.showBanner({ text: `${car.racer.name} a explosé !`, color: '#ff9a2f', ttl: 2, big: false });
             }
@@ -272,9 +277,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           case 'bump':
           case 'wall':
             if (!car) break;
-            renderer.sparks(car, event.strength);
+            renderer.sparks(car, event.strength, event.type === 'wall' ? event : car);
             if (car.isPlayer) {
-              audio.race('bump', event.strength);
+              audio.race(event.type === 'wall' && event.sliding ? 'scrape' : 'bump', event.strength);
               if (event.type === 'wall') {
                 coach.wallHits++;
                 coach.lastWallAt = sim.time;
@@ -434,7 +439,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         handleEvents();
         // Split against the ghost (after the lap banner, which it replaces). The
         // finish line is announced by the end banner instead.
-        if (pendingSplit && ghost && pendingSplit.index < totalSectors - 1) {
+        if (pendingSplit && ghost && sim.phase === 'racing' && pendingSplit.index < totalSectors - 1) {
           const delta = splitDelta(ghost, pendingSplit.index, pendingSplit.time);
           if (delta !== undefined) {
             renderer.showBanner({

@@ -13,6 +13,9 @@ interface Headline {
 function headline(result: ResultView): Headline {
   const { report } = result;
   if (report.exploded) {
+    if (result.outcome.explosionCause === 'wall') {
+      return { big: '💥 Dans le mur.', sub: 'Ta caisse a explosé sous le choc.', tone: 'boom' };
+    }
     return { big: '💥 Boum.', sub: 'Ton moteur a explosé ! Tu as trop tiré sur le nitro.', tone: 'boom' };
   }
   if (report.abandoned) {
@@ -38,7 +41,7 @@ function standingsTable(result: ResultView): string {
     .sort((a, b) => a.position - b.position)
     .map((standing) => {
       const time = standing.exploded
-        ? '💥 Moteur explosé'
+        ? (standing.explosionCause === 'wall' ? '💥 Dans le mur' : '💥 Moteur explosé')
         : standing.time === undefined
           ? 'Non classé'
           : raceTime(standing.time);
@@ -84,7 +87,7 @@ export function renderResult(view: View): string {
   const engineBlock = report.exploded
     ? `
       <div class="result-block engine boom">
-        <p class="kicker danger">💥 Ton moteur a explosé !</p>
+        <p class="kicker danger">💥 ${outcome.explosionCause === 'wall' ? 'Voiture accidentée' : 'Ton moteur a explosé !'}</p>
         ${conditionGauge(report.conditionAfter)}
         <p>Il faut passer au garage avant la prochaine course. Si tu es à sec, Tonton Gégé te le rafistolera contre ce qu’il te reste.</p>
       </div>`

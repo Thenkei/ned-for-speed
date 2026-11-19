@@ -248,6 +248,8 @@ export interface RaceSetup {
   readonly weather?: Weather;
 }
 
+export type ExplosionCause = 'overheat' | 'wall';
+
 export interface RaceStanding {
   readonly name: string;
   readonly isPlayer: boolean;
@@ -255,6 +257,7 @@ export interface RaceStanding {
   /** Seconds, undefined when the racer did not finish. */
   readonly time?: number;
   readonly exploded: boolean;
+  readonly explosionCause?: ExplosionCause;
 }
 
 export interface RaceOutcome {
@@ -262,6 +265,7 @@ export interface RaceOutcome {
   readonly position: number;
   readonly racers: number;
   readonly exploded: boolean;
+  readonly explosionCause?: ExplosionCause;
   /** True when the player quit before the end. */
   readonly abandoned: boolean;
   readonly time: number;

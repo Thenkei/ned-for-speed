@@ -59,7 +59,10 @@ export function renderTrialResult(view: View): string {
   let tone: 'win' | 'meh' | 'lose' | 'boom';
   if (!run) {
     big = outcome.exploded ? '💥 Boum.' : 'Pas de chrono';
-    sub = outcome.exploded ? 'Moteur explosé : le chrono ne compte pas (et ta voiture n’a rien, c’était pour du beurre).' : 'Tour non bouclé : rien n’est enregistré.';
+    const cause = outcome.explosionCause === 'wall' ? 'Voiture accidentée' : 'Moteur explosé';
+    sub = outcome.exploded
+      ? `${cause} : le chrono ne compte pas (et ta voiture n’a rien, c’était pour du beurre).`
+      : 'Tour non bouclé : rien n’est enregistré.';
     tone = outcome.exploded ? 'boom' : 'lose';
   } else if (result.newRecord) {
     big = 'Nouveau record !';

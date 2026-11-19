@@ -12,6 +12,7 @@ export type RaceSound =
   | 'beep'
   | 'go'
   | 'explosion'
+  | 'scrape'
   | 'bump'
   | 'lap'
   | 'finish'
@@ -314,6 +315,7 @@ const RACE_SOUNDS: Readonly<Record<RaceSound, (strength: number) => void>> = {
   finish: () => {
     [659, 784, 1047, 1319].forEach((frequency, i) => tone({ frequency, duration: 0.18, delay: i * 0.1, volume: 0.15 }));
   },
+  scrape: (strength) => burst(0.14, 0.08 + strength * 0.15, 4000, 1600),
   bump: (strength) => burst(0.14, 0.2 + strength * 0.3, 900, 200),
   explosion: () => {
     burst(1.3, 0.9, 1800, 60);

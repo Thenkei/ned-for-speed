@@ -4,6 +4,7 @@ import type { GhostPose } from '../domain/ghost';
 import { createRng } from '../domain/rng';
 import { LAUNCH_TUNING } from '../domain/tuning';
 import type { CarLook } from '../domain/types';
+import type { ReplayCar } from './crashReplay';
 import { BODY_SHAPES } from './carBody';
 import { drawCar, rgba } from './carSprite';
 import { buildScenery, createSpeckPattern, drawSceneryItem, type Scenery } from './scenery';
@@ -226,7 +227,7 @@ export class RaceRenderer {
     this.particles.push(particle);
   }
 
-  explode(car: CarSim): void {
+  explode(car: ReplayCar): void {
     for (let i = 0; i < 46; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 40 + Math.random() * 260;
@@ -308,7 +309,7 @@ export class RaceRenderer {
     if (car.isPlayer) this.addShake(0.12 + strength * 0.25);
   }
 
-  sparks(car: CarSim, strength: number, origin: { x: number; y: number } = car): void {
+  sparks(car: ReplayCar, strength: number, origin: { x: number; y: number } = car): void {
     const count = Math.round(3 + strength * 8);
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -407,6 +408,10 @@ export class RaceRenderer {
       }
     }
 
+    this.advanceParticles(dt);
+  }
+
+  private advanceParticles(dt: number): void {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i] as Particle;
       p.life += dt;
@@ -435,7 +440,7 @@ export class RaceRenderer {
   // ───────────────────────── Frame ─────────────────────────
 
   render(dt: number): void {
-    const { ctx, sim } = this;
+    const { sim } = this;
     this.clock += dt;
     this.updateEffects(dt);
     if (this.banner) {
@@ -451,13 +456,40 @@ export class RaceRenderer {
     const follow = Math.min(1, dt * 5);
     this.camX += (targetX - this.camX) * follow;
     this.camY += (targetY - this.camY) * follow;
-    const baseZoom = clamp(Math.min(this.width, this.height * 1.35) / 880, 0.5, 1.6);
-    const targetZoom = baseZoom * (1.12 - 0.4 * speedRatio);
+    const targetZoom = this.baseZoom * (1.12 - 0.4 * speedRatio);
     this.zoom += (targetZoom - this.zoom) * Math.min(1, dt * 2.5);
     this.shake = Math.max(0, this.shake - dt * 2.2);
     const shakeX = (Math.random() - 0.5) * this.shake * 16;
     const shakeY = (Math.random() - 0.5) * this.shake * 16;
 
+    this.drawWorld(sim.cars, shakeX, shakeY);
+    this.drawAtmosphere(dt);
+    this.drawHud(dt);
+  }
+
+  private get baseZoom(): number {
+    return clamp(Math.min(this.width, this.height * 1.35) / 880, 0.5, 1.6);
+  }
+
+  beginReplay(): void {
+    this.particles.length = 0;
+    this.skids.length = 0;
+    this.ghostPose = undefined;
+  }
+
+  renderReplay(cars: ReplayCar[], dt: number): void {
+    const player = cars[this.sim.player.id]!;
+    this.clock += dt;
+    this.advanceParticles(dt);
+    this.camX = player.x;
+    this.camY = player.y;
+    this.zoom = this.baseZoom * 0.68;
+    this.drawWorld(cars, 0, 0);
+    this.drawAtmosphere(dt);
+  }
+
+  private drawWorld(cars: readonly ReplayCar[], shakeX: number, shakeY: number): void {
+    const { ctx } = this;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = this.scenery.theme.ground;
     ctx.fillRect(0, 0, this.width, this.height);
@@ -479,12 +511,9 @@ export class RaceRenderer {
       if (visible(item.x, item.y, item.radius)) drawSceneryItem(ctx, item);
     }
     this.drawLamps(visible);
-    this.drawCars(visible);
+    this.drawCars(cars, visible);
     this.drawParticles();
     ctx.restore();
-
-    this.drawAtmosphere(dt);
-    this.drawHud(dt);
   }
 
   private drawGround(viewHalfW: number, viewHalfH: number): void {
@@ -627,13 +656,13 @@ export class RaceRenderer {
     }
   }
 
-  private drawCars(visible: (x: number, y: number, r: number) => boolean): void {
-    const { ctx, sim } = this;
+  private drawCars(cars: readonly ReplayCar[], visible: (x: number, y: number, r: number) => boolean): void {
+    const { ctx } = this;
 
     // Headlight beams first (under every car body).
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    for (const car of sim.cars) {
+    for (const car of cars) {
       if (car.engine.exploded || !visible(car.x, car.y, 240)) continue;
       const shape = BODY_SHAPES[car.racer.look.body];
       ctx.save();
@@ -667,7 +696,7 @@ export class RaceRenderer {
     }
 
     // The player is drawn last so it is never hidden.
-    const ordered = [...sim.cars].sort((a, b) => Number(a.isPlayer) - Number(b.isPlayer));
+    const ordered = [...cars].sort((a, b) => Number(a.isPlayer) - Number(b.isPlayer));
     for (const car of ordered) {
       if (!visible(car.x, car.y, 60)) continue;
       ctx.save();

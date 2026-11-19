@@ -17,6 +17,7 @@ import {
   type TurboState,
 } from '../infra/engineProfiles';
 import { engineSoundParams, RIVAL_SOUND, rivalSoundParams } from '../infra/engineSound';
+import { CrashReplay, REPLAY_SPEED } from './crashReplay';
 import { createRaceInput } from './input';
 import { RaceRenderer, formatTime } from './render';
 import { maxCurvature } from './track';
@@ -196,6 +197,60 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       host.replaceChildren();
       host.classList.remove('race-host');
       resolve(outcome);
+    };
+
+    const history = new CrashReplay();
+    let playReplay: ((elapsed: number) => void) | undefined;
+
+    const startCrashReplay = (): void => {
+      input.dispose();
+      audio.stopEngine();
+      const bar = document.createElement('div');
+      bar.className = 'race-replay';
+      const label = document.createElement('span');
+      label.textContent = 'Ralenti · 0,5×';
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.textContent = 'Passer le ralenti';
+      skip.addEventListener('click', () => finish(false), { signal: abort.signal });
+      bar.append(label, skip);
+      host.append(bar);
+      skip.focus({ preventScroll: true });
+      window.addEventListener('keydown', event => {
+        if (!['Escape', 'Enter', 'Space'].includes(event.code)) return;
+        event.preventDefault();
+        if (!event.repeat) finish(false);
+      }, { signal: abort.signal });
+
+      // Give the live explosion a beat, then rewind the visuals. The authoritative
+      // simulation stays on the fatal tick for both a skipped and a completed replay.
+      let leadIn = 0.45;
+      let cursor = history.start;
+      let previous = cursor - 1e-8;
+      playReplay = elapsed => {
+        if (document.hidden) return;
+        if (leadIn > 0) {
+          leadIn -= elapsed;
+          if (leadIn > 0) {
+            renderer.render(elapsed);
+            return;
+          }
+          renderer.beginReplay();
+        }
+        const cars = history.carsAt(cursor);
+        for (const effect of history.effectsBetween(previous, cursor)) {
+          const car = cars[effect.carId]!;
+          if (effect.type === 'explosion') renderer.explode(car);
+          else renderer.sparks(car, effect.strength, effect);
+        }
+        renderer.renderReplay(cars, elapsed * REPLAY_SPEED);
+        if (cursor >= history.end + 0.4) {
+          finish(false);
+          return;
+        }
+        previous = cursor;
+        cursor += elapsed * REPLAY_SPEED;
+      };
     };
 
     overlay.addEventListener(
@@ -405,11 +460,18 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       try {
         const elapsed = Math.min(0.1, (now - last) / 1000);
         last = now;
+        if (playReplay) {
+          playReplay(elapsed);
+          return;
+        }
         if (input.consumePause()) setPaused(!paused);
         const wantsReset = input.consumeReset();
         if (paused) return;
 
-        if (wantsReset && sim.phase === 'racing' && !sim.player.engine.exploded) resetCarToTrack(sim, sim.player);
+        if (wantsReset && sim.phase === 'racing' && !sim.player.engine.exploded) {
+          resetCarToTrack(sim, sim.player);
+          history.clear();
+        }
 
         accumulator += elapsed;
         let controls = input.read();
@@ -422,7 +484,10 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         let steps = 0;
         while (accumulator >= STEP && steps < MAX_STEPS_PER_FRAME) {
           if (debug.autopilot) controls = autopilot(sim.player, STEP);
+          const firstEvent = sim.events.length;
           stepRaceSim(sim, { ...controls, shift: pendingShift }, STEP);
+          const wallCrash = sim.player.engine.explosionCause === 'wall';
+          if (sim.phase === 'racing' || wallCrash) history.record(sim, firstEvent);
           pendingShift = 0;
           // Recorded on through the outro (sim time keeps running), so the ghost
           // carries on past the line instead of parking a frame short of it. On
@@ -434,9 +499,15 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           }
           accumulator -= STEP;
           steps++;
+          if (wallCrash) break;
         }
         if (steps === MAX_STEPS_PER_FRAME) accumulator = 0;
         handleEvents();
+        if (sim.player.engine.explosionCause === 'wall') {
+          renderer.render(elapsed);
+          startCrashReplay();
+          return;
+        }
         // Split against the ghost (after the lap banner, which it replaces). The
         // finish line is announced by the end banner instead.
         if (pendingSplit && ghost && sim.phase === 'racing' && pendingSplit.index < totalSectors - 1) {

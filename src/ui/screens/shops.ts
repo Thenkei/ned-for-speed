@@ -1,5 +1,5 @@
 import { CAR_MODELS } from '../../domain/cars';
-import { activeCar, effectiveStats, performanceIndex, shopTier, statsWithPart } from '../../domain/game';
+import { activeCar, effectiveStats, lookOf, performanceIndex, shopTier, statsWithPart } from '../../domain/game';
 import { jewelKind, jewelResaleValue, SHOP_JEWELS, swagMultiplier, totalSwag } from '../../domain/jewels';
 import { RARITIES, RARITY_LABELS, type CarLook, type StatKey } from '../../domain/types';
 import { DISTRICTS } from '../../domain/world';
@@ -60,7 +60,7 @@ export function renderDealer(view: View): string {
     const owned = game.cars.find((car) => car.modelId === model.id);
     const active = owned?.uid === game.activeCarUid;
     const look: CarLook = owned
-      ? { body: model.body, paint: owned.paint, neon: owned.neon, spoiler: owned.equipped.spoiler !== undefined }
+      ? lookOf(owned)
       : { body: model.body, paint: model.defaultPaint, neon: '', spoiler: false };
     const affordable = game.money >= model.price;
 

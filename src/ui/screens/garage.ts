@@ -7,6 +7,7 @@ import {
   partOwnerCar,
   performanceIndex,
   repairCost,
+  lookOf,
   statsWithPart,
 } from '../../domain/game';
 import { partResaleValue, RARITY_ORDER } from '../../domain/parts';
@@ -14,7 +15,6 @@ import {
   SLOT_ICONS,
   SLOT_LABELS,
   SLOTS,
-  type CarLook,
   type GameState,
   type OwnedCar,
   type Part,
@@ -33,15 +33,6 @@ import {
 } from '../components';
 import { esc, euro, safeColor } from '../dom';
 import type { View } from '../view';
-
-export function lookOf(car: OwnedCar): CarLook {
-  return {
-    body: carModel(car.modelId).body,
-    paint: car.paint,
-    neon: car.neon,
-    spoiler: car.equipped.spoiler !== undefined,
-  };
-}
 
 function carSwitcher(game: GameState, active: OwnedCar): string {
   if (game.cars.length < 2) return '';
@@ -100,6 +91,10 @@ function paintBlock(car: OwnedCar): string {
     <div class="panel paint">
       <h4>Peinture <span class="price-note">${esc(euro(PAINT_JOB_PRICE))} le coup de pistolet</span></h4>
       <div class="swatches">${paints}</div>
+      ${car.bodyDamage?.length ? button({
+        action: 'paint', data: { hex: car.paint }, variant: 'ghost', small: true,
+        label: `Débosseler et repeindre dans cette teinte (${euro(PAINT_JOB_PRICE)})`,
+      }) : ''}
       <h4>Néons de bas de caisse <span class="price-note">${esc(euro(NEON_PRICE))} la pose</span></h4>
       <div class="swatches">${neons}</div>
     </div>`;

@@ -173,3 +173,43 @@
   color: #ffd23f;
   font-size: 24px;
 }
+
+.race-replay {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: white;
+  font: italic 800 16px "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  pointer-events: none;
+}
+
+.race-replay span,
+.race-replay button {
+  background: #151230;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.race-replay span {
+  border-left: 3px solid #ff3fa4;
+  text-transform: uppercase;
+}
+
+.race-replay button {
+  min-height: 44px;
+  border: 1px solid #2ff3ff;
+  color: #2ff3ff;
+  font: inherit;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.race-replay button:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 3px;
+}

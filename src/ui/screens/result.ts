@@ -147,7 +147,7 @@ export function renderResult(view: View): string {
   const actions = report.gameCompleted
     ? button({ action: 'result-ending', label: 'La consécration →', variant: 'gold' })
     : `
-      ${report.conditionAfter < 100 ? button({ action: 'result-garage', label: '🔧 Au garage', variant: report.exploded ? 'cyan' : 'ghost' }) : ''}
+      ${report.conditionAfter < 100 || outcome.bodyDamage?.length ? button({ action: 'result-garage', label: '🔧 Au garage', variant: report.exploded ? 'cyan' : 'ghost' }) : ''}
       ${button({ action: 'result-continue', label: 'Retour au quartier →', variant: 'primary' })}`;
 
   return `

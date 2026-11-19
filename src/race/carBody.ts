@@ -1,4 +1,4 @@
-import type { BodyKind } from '../domain/types';
+import type { BodyKind, PanelMark } from '../domain/types';
 
 export interface BodyShape {
   readonly length: number;
@@ -20,21 +20,14 @@ export const BODY_SHAPES: Readonly<Record<BodyKind, BodyShape>> = {
   super: { length: 48, width: 23, nose: 0.62, tail: 0.92, cabinRear: -9, cabinFront: 9 },
 };
 
-export interface Scrape {
-  /** Position and wall tangent in the car frame, nose pointing to +X. */
-  readonly x: number;
-  readonly y: number;
-  readonly angle: number;
-  length: number;
-}
-
-/** Nearby strokes wear the same patch of paint during sustained contact. */
-export function markScrape(marks: Scrape[], contact: Scrape): void {
-  const existing = marks.find(mark => Math.hypot(mark.x - contact.x, mark.y - contact.y) < 3);
-  if (existing) {
-    existing.length = Math.min(14, Math.max(existing.length + 1, contact.length));
+/** Replace nearby marks without mutating any mark shared with the career save. */
+export function recordMark(marks: PanelMark[], mark: PanelMark): void {
+  const index = marks.findIndex(m => m.kind === mark.kind && Math.hypot(m.x - mark.x, m.y - mark.y) < 3);
+  if (index >= 0) {
+    const previous = marks[index]!;
+    marks[index] = { ...mark, length: Math.min(14, Math.max(previous.length, mark.length)) };
     return;
   }
   if (marks.length >= 16) marks.shift();
-  marks.push(contact);
+  marks.push(mark);
 }

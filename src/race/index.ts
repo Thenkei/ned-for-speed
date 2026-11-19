@@ -277,9 +277,9 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           case 'bump':
           case 'wall':
             if (!car) break;
-            renderer.sparks(car, event.strength, event.type === 'wall' ? event : car);
+            renderer.sparks(car, event.strength, event);
             if (car.isPlayer) {
-              audio.race(event.type === 'wall' && event.sliding ? 'scrape' : 'bump', event.strength);
+              audio.race(event.sliding ? 'scrape' : 'bump', event.strength);
               if (event.type === 'wall') {
                 coach.wallHits++;
                 coach.lastWallAt = sim.time;

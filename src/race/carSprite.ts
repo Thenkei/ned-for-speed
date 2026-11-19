@@ -1,5 +1,5 @@
-import type { CarLook } from '../domain/types';
-import { BODY_SHAPES, type BodyShape, type Scrape } from './carBody';
+import type { CarLook, PanelMark } from '../domain/types';
+import { BODY_SHAPES, type BodyShape } from './carBody';
 
 export interface CarDrawState {
   /** 0–1 brake light intensity. */
@@ -11,7 +11,7 @@ export interface CarDrawState {
   readonly headlights?: boolean;
   /** Animation clock in seconds. */
   readonly time?: number;
-  readonly scrapes?: readonly Scrape[];
+  readonly bodyDamage?: readonly PanelMark[];
   /** Charred wreck after an explosion. */
   readonly wrecked?: boolean;
 }
@@ -125,6 +125,30 @@ export function drawCar(ctx: CanvasRenderingContext2D, look: CarLook, state: Car
     ctx.fillRect(-hl - 0.2, -hw + 0.5, 0.9, shape.width - 1);
   }
 
+  // Cut the folded edge out of the body and its trim, leaving the wheel beneath visible.
+  const damage = state.bodyDamage ?? look.bodyDamage;
+  if (damage?.length) {
+    ctx.save();
+    for (const mark of damage) {
+      if (mark.kind !== 'dent') continue;
+      const half = mark.length / 2;
+      ctx.beginPath();
+      ctx.rect(-40, -30, 80, 60);
+      ctx.translate(mark.x, mark.y);
+      ctx.rotate(mark.angle);
+      ctx.moveTo(-half, -9);
+      ctx.lineTo(-half, -1.5);
+      ctx.lineTo(-half * 0.3, half * 0.34);
+      ctx.lineTo(half * 0.45, half * 0.21);
+      ctx.lineTo(half, -1.5);
+      ctx.lineTo(half, -9);
+      ctx.closePath();
+      ctx.clip('evenodd');
+      ctx.rotate(-mark.angle);
+      ctx.translate(-mark.x, -mark.y);
+    }
+  }
+
   // Body with a soft highlight across its width.
   const bodyGradient = ctx.createLinearGradient(0, -hw, 0, hw);
   bodyGradient.addColorStop(0, shade(paint, -0.42));
@@ -211,15 +235,35 @@ export function drawCar(ctx: CanvasRenderingContext2D, look: CarLook, state: Car
     ctx.restore();
   }
 
-  if (!wrecked && state.scrapes?.length) {
+  if (!wrecked && damage?.length) {
     ctx.save();
     bodyPath(ctx, shape);
     ctx.clip();
-    for (const mark of state.scrapes) {
+    for (const mark of damage) {
       ctx.save();
       ctx.translate(mark.x, mark.y);
       ctx.rotate(mark.angle);
       const half = mark.length / 2;
+      if (mark.kind === 'dent') {
+        // Light catches the ridge just inside the folded panel.
+        ctx.fillStyle = shade(paint, -0.48);
+        ctx.beginPath();
+        ctx.moveTo(-half, -1.5);
+        ctx.lineTo(-half * 0.3, half * 0.34);
+        ctx.lineTo(half, -1.5);
+        ctx.lineTo(half * 0.2, half * 0.8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = shade(paint, 0.48);
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(-half * 0.3, half * 0.34);
+        ctx.lineTo(half * 0.2, half * 0.8);
+        ctx.lineTo(half * 0.75, 0.5);
+        ctx.stroke();
+        ctx.restore();
+        continue;
+      }
       // Gouged paint and a narrower, exposed-metal edge.
       ctx.beginPath();
       ctx.moveTo(-half, 0);
@@ -228,7 +272,7 @@ export function drawCar(ctx: CanvasRenderingContext2D, look: CarLook, state: Car
       ctx.strokeStyle = '#392f32';
       ctx.lineWidth = 2.4;
       ctx.stroke();
-      ctx.strokeStyle = '#d3c8b8';
+      ctx.strokeStyle = mark.paintTransfer ?? '#d3c8b8';
       ctx.lineWidth = 0.85;
       ctx.stroke();
       ctx.fillStyle = '#847c74';
@@ -237,6 +281,8 @@ export function drawCar(ctx: CanvasRenderingContext2D, look: CarLook, state: Car
     }
     ctx.restore();
   }
+
+  if (damage?.length) ctx.restore();
 
   // Nitro flames out of the exhaust.
   if (state.nitro && !wrecked) {

@@ -680,7 +680,7 @@ export class RaceRenderer {
         headlights: true,
         time: this.clock + car.id,
         wrecked: car.engine.exploded,
-        scrapes: car.scrapes,
+        bodyDamage: car.bodyDamage,
       });
       ctx.restore();
 

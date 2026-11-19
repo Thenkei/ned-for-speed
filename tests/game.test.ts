@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAR_MODELS } from '../src/domain/cars';
+import { CAR_MODELS, PAINT_JOB_PRICE } from '../src/domain/cars';
 import {
   activeCar,
   applyBossOutcome,
@@ -20,6 +20,8 @@ import {
   isDistrictUnlocked,
   newGame,
   repairCar,
+  repaintCar,
+  timeTrialSetup,
   repairCost,
   sellJewel,
   sellPart,
@@ -31,6 +33,8 @@ import { buildPart, exhaustBuildOf, rarityOdds, rollPart, turboBuildOf } from '.
 import { createRng } from '../src/domain/rng';
 import { WEATHER_PROFILES } from '../src/domain/tuning';
 import { RARITIES, type GameState, type RaceOutcome, type Rarity } from '../src/domain/types';
+import { createRaceSim } from '../src/race/sim';
+import { recordMark } from '../src/race/carBody';
 import { DISTRICTS } from '../src/domain/world';
 
 const outcome = (overrides: Partial<RaceOutcome> = {}): RaceOutcome => ({
@@ -383,5 +387,35 @@ describe('bosses and jewels', () => {
     }
     expect(hasWonGame(state)).toBe(true);
     expect(lastReport?.gameCompleted).toBe(true);
+  });
+});
+
+describe('career bodywork', () => {
+  const dent = { kind: 'dent', x: 16, y: 3, angle: 1.5, length: 8 } as const;
+  const scrape = { kind: 'scrape', x: -8, y: -7, angle: 0, length: 6, paintTransfer: '#ef4444' } as const;
+
+  it('keeps marks on the car that raced across events, duels and garage visits', () => {
+    const start = unwrap(buyCar(rich(newGame(1)), CAR_MODELS[1]!.id));
+    const event = applyEventOutcome(start, parking.events[0]!, outcome({ bodyDamage: [dent] })).state;
+    const duel = unwrap(applyBossOutcome(event, parking, event.jewels[0]!.uid, outcome({ bodyDamage: [dent, scrape] }))).state;
+    const nextRace = createRaceSim(eventRaceSetup(duel, parking, parking.events[0]!));
+    expect(nextRace.player.bodyDamage).toEqual([dent, scrape]);
+    expect(duel.cars.find(car => car.uid !== duel.activeCarUid)?.bodyDamage).toBeUndefined();
+
+    const trial = createRaceSim(timeTrialSetup(duel, parking, 'dry'));
+    recordMark(trial.player.bodyDamage, { ...dent, length: 14 });
+    expect(activeCar(duel).bodyDamage).toEqual([dent, scrape]);
+  });
+
+  it('keeps scars through engine repairs and charges once to refinish in the same colour', () => {
+    const damaged = applyEventOutcome(rich(newGame(2)), parking.events[0]!, outcome({ wear: 10, bodyDamage: [dent, scrape] })).state;
+    const fixed = unwrap(repairCar(damaged, damaged.activeCarUid));
+    const car = activeCar(fixed);
+    expect(car.bodyDamage).toEqual([dent, scrape]);
+    expect(repaintCar({ ...fixed, money: 0 }, car.uid, car.paint).ok).toBe(false);
+    const clean = unwrap(repaintCar(fixed, car.uid, car.paint));
+    expect(activeCar(clean)).toMatchObject({ paint: car.paint, condition: 100, bodyDamage: [] });
+    expect(clean.money).toBe(fixed.money - PAINT_JOB_PRICE);
+    expect(unwrap(repaintCar(clean, car.uid, car.paint))).toBe(clean);
   });
 });

@@ -113,7 +113,7 @@ describe('race simulation', () => {
 });
 
 describe('wall damage', () => {
-  function hitWall(speed: number, angle: number, side = 1) {
+  function hitWall(speed: number, angle: number, side = 1, reverse = false) {
     const sim = createRaceSim({ ...setupFor(0, 0, 45), rivals: [] });
     sim.phase = 'racing';
     const car = sim.player;
@@ -125,6 +125,7 @@ describe('wall damage', () => {
     car.heading = Math.atan2(wall.ty, wall.tx) + side * angle;
     car.vx = speed * Math.cos(car.heading);
     car.vy = speed * Math.sin(car.heading);
+    if (reverse) car.heading += Math.PI;
     car.trackIndex = index;
     car.s = wall.s;
     stepRaceSim(sim, IDLE, DT);
@@ -145,19 +146,89 @@ describe('wall damage', () => {
   it.each([-1, 1])('scrapes the contacted side at the same speed on a shallow approach (side %i)', side => {
     const sim = hitWall(400, 0.08, side);
     expect(sim.phase).toBe('racing');
-    expect(sim.player.scrapes).toHaveLength(1);
-    const mark = sim.player.scrapes[0]!;
+    expect(sim.player.bodyDamage).toHaveLength(1);
+    const mark = sim.player.bodyDamage[0]!;
     expect(mark.y * side).toBeGreaterThan(6);
     expect(sim.events).toContainEqual(expect.objectContaining({ type: 'wall', sliding: true }));
     resetCarToTrack(sim, sim.player);
     stepRaceSim(sim, IDLE, DT);
-    expect(sim.player.scrapes).toEqual([mark]);
+    expect(sim.player.bodyDamage).toEqual([mark]);
+  });
+
+  it('rotates in opposite directions for a nose or tail clip on the right panel', () => {
+    const nose = hitWall(200, 0.45);
+    const tail = hitWall(200, 0.45, -1, true);
+    expect(nose.player.bodyDamage[0]!.x).toBeGreaterThan(0);
+    expect(tail.player.bodyDamage[0]!.x).toBeLessThan(0);
+    expect(nose.player.bodyDamage[0]!.y).toBeGreaterThan(0);
+    expect(tail.player.bodyDamage[0]!.y).toBeGreaterThan(0);
+    expect(nose.player.impactYaw).toBeLessThan(0);
+    expect(tail.player.impactYaw).toBeGreaterThan(0);
+    const heading = nose.player.heading;
+    stepRaceSim(nose, IDLE, DT);
+    expect(nose.player.heading).toBeLessThan(heading);
+    resetCarToTrack(nose, nose.player);
+    expect(nose.player.impactYaw).toBe(0);
+  });
+
+  it('dents the nose on a medium square hit without ending the race or spinning it', () => {
+    const sim = hitWall(180, Math.PI / 2);
+    expect(sim.phase).toBe('racing');
+    expect(sim.player.bodyDamage[0]).toMatchObject({ kind: 'dent' });
+    expect(sim.player.bodyDamage[0]!.x).toBeGreaterThan(15);
+    expect(Math.abs(sim.player.impactYaw)).toBeLessThan(0.05);
   });
 
   it('marks the nose on a slow square hit and ignores stationary contact', () => {
     const sim = hitWall(80, Math.PI / 2);
     expect(sim.phase).toBe('racing');
-    expect(sim.player.scrapes[0]?.x).toBeGreaterThan(15);
-    expect(hitWall(0, 0).player.scrapes).toHaveLength(0);
+    expect(sim.player.bodyDamage[0]?.x).toBeGreaterThan(15);
+    expect(hitWall(0, 0).player.bodyDamage).toHaveLength(0);
+  });
+});
+
+describe('car-to-car damage', () => {
+  // Place two identical bodies on a straight. All offsets and speeds are in the road frame.
+  function collide(gap: number, lateral: number, rearSpeed: number, leadSpeed: number) {
+    const setup = setupFor(0, 0, 45);
+    const rival = { ...setup.player, look: { ...setup.player.look, paint: '#ef4444' } };
+    const sim = createRaceSim({ ...setup, rivals: [rival] });
+    sim.phase = 'racing';
+    const lead = sim.cars[0]!;
+    const road = sim.track.samples[20]!;
+    for (const car of sim.cars) {
+      const ahead = car === lead ? gap : 0;
+      const sideways = car === lead ? lateral : 0;
+      const speed = car === lead ? leadSpeed : rearSpeed;
+      car.x = road.x + road.tx * ahead + road.nx * sideways;
+      car.y = road.y + road.ty * ahead + road.ny * sideways;
+      car.heading = Math.atan2(road.ty, road.tx);
+      car.trackIndex = 20;
+      car.s = road.s + ahead;
+      car.vx = road.tx * speed;
+      car.vy = road.ty * speed;
+      car.speed = speed;
+    }
+    stepRaceSim(sim, IDLE, DT);
+    return { rear: sim.player, lead };
+  }
+
+  it('dents opposing bumpers on a rear-end hit, while matched speeds leave them clean', () => {
+    const { rear, lead } = collide(38, 0, 270, 60);
+    expect(rear.bodyDamage[0]).toMatchObject({ kind: 'dent' });
+    expect(lead.bodyDamage[0]).toMatchObject({ kind: 'dent' });
+    expect(rear.bodyDamage[0]!.x).toBeGreaterThan(15);
+    expect(lead.bodyDamage[0]!.x).toBeLessThan(-15);
+    const matched = collide(37.9, 0, 270, 270);
+    expect(matched.rear.bodyDamage).toHaveLength(0);
+    expect(matched.lead.bodyDamage).toHaveLength(0);
+  });
+
+  it('trades paint on the two facing panels during a sideswipe', () => {
+    const { rear, lead } = collide(22, 18.8, 250, 140);
+    expect(rear.bodyDamage[0]).toMatchObject({ kind: 'scrape', paintTransfer: lead.racer.look.paint });
+    expect(lead.bodyDamage[0]).toMatchObject({ kind: 'scrape', paintTransfer: rear.racer.look.paint });
+    expect(rear.bodyDamage[0]!.y).toBeGreaterThan(6);
+    expect(lead.bodyDamage[0]!.y).toBeLessThan(-6);
   });
 });

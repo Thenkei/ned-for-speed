@@ -8,6 +8,7 @@ import {
   SLOTS,
   STAT_KEYS,
   type Boss,
+  type CarLook,
   type District,
   type GameState,
   type Jewel,
@@ -264,9 +265,9 @@ export function transferParts(state: GameState, fromUid: string, toUid: string):
 export function repaintCar(state: GameState, carUid: string, paint: string): Result<GameState> {
   const car = findCar(state, carUid);
   if (!car) return err('Voiture introuvable.');
-  if (car.paint === paint) return ok(state);
+  if (car.paint === paint && !car.bodyDamage?.length) return ok(state);
   if (state.money < PAINT_JOB_PRICE) return err('Pas assez de thunes pour la peinture.');
-  return ok({ ...replaceCar(state, { ...car, paint }), money: state.money - PAINT_JOB_PRICE });
+  return ok({ ...replaceCar(state, { ...car, paint, bodyDamage: [] }), money: state.money - PAINT_JOB_PRICE });
 }
 
 export function setNeon(state: GameState, carUid: string, neon: string): Result<GameState> {
@@ -343,17 +344,21 @@ function rivalToRacer(spec: RivalSpec): Racer {
   };
 }
 
+export function lookOf(car: OwnedCar): CarLook {
+  return {
+    body: carModel(car.modelId).body,
+    paint: car.paint,
+    ...(car.bodyDamage && { bodyDamage: car.bodyDamage }),
+    neon: car.neon,
+    spoiler: car.equipped.spoiler !== undefined,
+  };
+}
+
 export function playerRacer(state: GameState): Racer {
   const car = activeCar(state);
-  const model = carModel(car.modelId);
   return {
     name: 'Ned',
-    look: {
-      body: model.body,
-      paint: car.paint,
-      neon: car.neon,
-      spoiler: car.equipped.spoiler !== undefined,
-    },
+    look: lookOf(car),
     stats: effectiveStats(state, car),
     condition: car.condition,
     skill: 1,
@@ -517,7 +522,7 @@ export function applyEventOutcome(
 
   const conditionAfter = conditionAfterRace(car, outcome);
   let next: GameState = {
-    ...replaceCar(state, { ...car, condition: conditionAfter }),
+    ...replaceCar(state, { ...car, condition: conditionAfter, ...(outcome.bodyDamage && { bodyDamage: outcome.bodyDamage }) }),
     money: Math.max(0, state.money - event.entryFee) + prize,
     respect: state.respect + respect,
     inventory: loot ? [...state.inventory, loot] : state.inventory,
@@ -589,7 +594,7 @@ export function applyBossOutcome(
   const respect = won ? (firstWin ? boss.respect : Math.round(boss.respect * 0.1)) : 0;
 
   let next: GameState = {
-    ...replaceCar(state, { ...car, condition: conditionAfter }),
+    ...replaceCar(state, { ...car, condition: conditionAfter, ...(outcome.bodyDamage && { bodyDamage: outcome.bodyDamage }) }),
     money: state.money + prize,
     respect: state.respect + respect,
     jewels,

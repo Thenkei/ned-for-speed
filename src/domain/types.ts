@@ -100,7 +100,18 @@ export interface CarModel {
   readonly defaultPaint: string;
 }
 
+/** Body-space mark. The tangent points along the panel, with +Y after rotation pointing inward. */
+export interface PanelMark {
+  readonly kind: 'scrape' | 'dent';
+  readonly x: number;
+  readonly y: number;
+  readonly angle: number;
+  readonly length: number;
+  readonly paintTransfer?: string;
+}
+
 export interface OwnedCar {
+  readonly bodyDamage?: readonly PanelMark[];
   readonly uid: string;
   readonly modelId: string;
   readonly paint: string;
@@ -196,6 +207,7 @@ export interface District {
 
 /** What the race needs to draw a car. */
 export interface CarLook {
+  readonly bodyDamage?: readonly PanelMark[];
   readonly body: BodyKind;
   readonly paint: string;
   readonly neon: string;
@@ -261,6 +273,8 @@ export interface RaceStanding {
 }
 
 export interface RaceOutcome {
+  /** Complete bodywork on return, including marks carried into the race. */
+  readonly bodyDamage?: readonly PanelMark[];
   /** 1-based finishing position of the player. */
   readonly position: number;
   readonly racers: number;

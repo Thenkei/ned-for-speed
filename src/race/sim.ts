@@ -36,8 +36,8 @@ import {
 import { createRng, type Rng } from '../domain/rng';
 import { WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
 import { applyWeather, weatherProfile } from '../domain/weather';
-import type { RaceOutcome, RaceSetup, RaceStanding, Racer } from '../domain/types';
-import { BODY_SHAPES, markScrape, type Scrape } from './carBody';
+import type { PanelMark, RaceOutcome, RaceSetup, RaceStanding, Racer } from '../domain/types';
+import { BODY_SHAPES, recordMark } from './carBody';
 import { locate, maxCurvature, sampleAt, sampleAtDistance, trackById, type Track } from './track';
 
 /**
@@ -60,8 +60,7 @@ export interface Controls {
 
 export type SimEvent =
   | { readonly type: 'explosion'; readonly carId: number }
-  | { readonly type: 'bump'; readonly carId: number; readonly strength: number }
-  | { readonly type: 'wall'; readonly carId: number; readonly strength: number; readonly x: number; readonly y: number; readonly sliding: boolean }
+  | { readonly type: 'wall' | 'bump'; readonly carId: number; readonly strength: number; readonly x: number; readonly y: number; readonly sliding: boolean }
   | { readonly type: 'lap'; readonly carId: number; readonly lap: number; readonly lapTime: number }
   | { readonly type: 'finish'; readonly carId: number }
   | { readonly type: 'countdown'; readonly value: number }
@@ -117,8 +116,11 @@ export interface CarSim {
   topSpeed: number;
   wrongWayTime: number;
   onPavement: boolean;
-  readonly scrapes: Scrape[];
-  nextScrapeAt: number;
+  readonly bodyDamage: PanelMark[];
+  /** Angular velocity from collisions, independent of steering input (rad/s). */
+  impactYaw: number;
+  readonly inverseInertia: number;
+  nextContactEffectAt: number;
   readonly ai: AiState | undefined;
 }
 
@@ -145,8 +147,7 @@ export interface RaceSim {
 const COUNTDOWN_SECONDS = 3.6;
 // Dashboard km/h directed into the wall. Along-wall motion does not contribute.
 const FATAL_WALL_SPEED = 100 / KMH_PER_PX_S;
-const CAR_RADIUS = 11;
-const CAR_CIRCLE_OFFSET = 12;
+const DENT_SPEED = 40 / KMH_PER_PX_S;
 /** After the first finisher, stragglers get this long before the race is called. */
 const STRAGGLER_TIMEOUT = 40;
 const NEUTRAL: Controls = { throttle: 0, brake: 0, steer: 0, nitro: false };
@@ -176,6 +177,7 @@ function createCar(
   transmission: TransmissionMode,
   launchRoll: number,
 ): CarSim {
+  const shape = BODY_SHAPES[racer.look.body];
   const engineSpec = engineSpecFrom(racer.stats, racer.condition);
   const drive = applyWeather(driveSpecFrom(racer.stats, racer.condition), weather);
   const gearbox = gearboxSpecFrom(drive.maxSpeed * engineSpec.nitroSpeedBoost);
@@ -219,8 +221,11 @@ function createCar(
     topSpeed: 0,
     wrongWayTime: 0,
     onPavement: false,
-    scrapes: [],
-    nextScrapeAt: 0,
+    bodyDamage: [...(racer.look.bodyDamage ?? [])],
+    impactYaw: 0,
+    // Rectangular body with unit mass and additional tyre resistance to rotation.
+    inverseInertia: 0.3 * 12 / (shape.length ** 2 + shape.width ** 2),
+    nextContactEffectAt: 0,
     ai: isPlayer
       ? undefined
       : {
@@ -415,7 +420,8 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
     // A gentle, deterministic fishtail: the car squirms but always goes where it is pointed.
     yaw += car.wheelspin * WHEELSPIN_TUNING.fishtailYaw * Math.sin(2 * Math.PI * WHEELSPIN_TUNING.fishtailHz * sim.time) * clamp(absForward / 60, 0, 1);
   }
-  car.heading = wrapAngle(car.heading + yaw * dt);
+  car.heading = wrapAngle(car.heading + (yaw + car.impactYaw) * dt);
+  car.impactYaw *= Math.exp(-4.5 * dt);
   fx = Math.cos(car.heading);
   fy = Math.sin(car.heading);
   forward = car.vx * fx + car.vy * fy;
@@ -535,6 +541,48 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   }
 }
 
+interface PanelContact {
+  readonly x: number;
+  readonly y: number;
+  readonly nx: number;
+  readonly ny: number;
+}
+
+interface Impact {
+  readonly closing: number;
+  readonly slidingSpeed: number;
+  readonly impulse: number;
+}
+
+/** Outward normal and contact point are in the car frame. The reaction acts inward. */
+function applyImpact(sim: RaceSim, car: CarSim, contact: PanelContact, impact: Impact, other?: CarSim): void {
+  const { x, y, nx, ny } = contact;
+  const { closing, slidingSpeed, impulse } = impact;
+  if (sim.phase !== 'racing' || car.finished || car.engine.exploded) return;
+  // r × impulse. Limit the kick so the driver can catch it with countersteer.
+  car.impactYaw = clamp(car.impactYaw + (y * nx - x * ny) * impulse * car.inverseInertia, -2, 2);
+  if (closing <= 15 && slidingSpeed <= 25) return;
+
+  const dent = closing >= DENT_SPEED;
+  const sliding = !dent && slidingSpeed > closing;
+  const strength = clamp((sliding ? slidingSpeed : closing) / FATAL_WALL_SPEED, 0, 1);
+  recordMark(car.bodyDamage, {
+    kind: dent ? 'dent' : 'scrape',
+    x: x - nx * 1.3, y: y - ny * 1.3,
+    angle: Math.atan2(nx, -ny),
+    length: dent ? 6 + strength * 8 : 3 + strength * (sliding ? 8 : 3),
+    ...(other && !dent && { paintTransfer: other.racer.look.paint }),
+  });
+  if (sim.time < car.nextContactEffectAt || (!other && closing >= FATAL_WALL_SPEED)) return;
+  const fx = Math.cos(car.heading);
+  const fy = Math.sin(car.heading);
+  sim.events.push({
+    type: other ? 'bump' : 'wall', carId: car.id, sliding, strength,
+    x: car.x + x * fx - y * fy, y: car.y + x * fy + y * fx,
+  });
+  car.nextContactEffectAt = sim.time + 0.14;
+}
+
 function resolveWall(sim: RaceSim, car: CarSim, fx: number, fy: number, dt: number): void {
   const shape = BODY_SHAPES[car.racer.look.body];
   const clearance = sim.track.wallOffset - Math.abs(car.lateral);
@@ -557,37 +605,34 @@ function resolveWall(sim: RaceSim, car: CarSim, fx: number, fy: number, dt: numb
   car.y -= ny * penetration;
   car.lateral -= side * penetration;
 
-  const outward = car.vx * nx + car.vy * ny;
+  const x = halfLength * halfLength * localNx / extent;
+  const y = halfWidth * halfWidth * localNy / extent;
+  const arm = x * localNy - y * localNx;
+  const outward = car.vx * nx + car.vy * ny + car.impactYaw * arm;
   if (outward < 0) return;
   const alongSpeed = Math.abs(car.vx * sample.tx + car.vy * sample.ty);
-  if (sim.phase === 'racing' && !car.finished && !car.engine.exploded) {
-    if (outward >= FATAL_WALL_SPEED) {
-      car.engine = { ...car.engine, exploded: true, explosionCause: 'wall', nitroActive: false };
-      sim.events.push({ type: 'explosion', carId: car.id });
-    } else if ((outward > 15 || alongSpeed > 25) && sim.time >= car.nextScrapeAt) {
-      const x = halfLength * halfLength * localNx / extent;
-      const y = halfWidth * halfWidth * localNy / extent;
-      const sliding = alongSpeed > outward;
-      const strength = clamp((sliding ? alongSpeed : outward) / FATAL_WALL_SPEED, 0, 1);
-      markScrape(car.scrapes, {
-        x: x - localNx * 1.3, y: y - localNy * 1.3,
-        angle: Math.atan2(localNx, -localNy), length: 3 + strength * (sliding ? 8 : 3),
-      });
-      sim.events.push({
-        type: 'wall', carId: car.id, strength, sliding,
-        x: car.x + fx * x - fy * y, y: car.y + fy * x + fx * y,
-      });
-      car.nextScrapeAt = sim.time + 0.14;
-    }
+  const impulse = outward * 1.25 / (1 + arm * arm * car.inverseInertia);
+  applyImpact(sim, car, { x, y, nx: localNx, ny: localNy }, { closing: outward, slidingSpeed: alongSpeed, impulse });
+  if (outward >= FATAL_WALL_SPEED && sim.phase === 'racing' && !car.finished && !car.engine.exploded) {
+    car.engine = { ...car.engine, exploded: true, explosionCause: 'wall', nitroActive: false };
+    sim.events.push({ type: 'explosion', carId: car.id });
   }
 
   // Reflect the normal velocity and scrub some speed along the wall.
   const scrub = (1 - clamp(outward / 500, 0, 0.45)) * Math.exp(-0.7 * dt);
-  car.vx = (car.vx - nx * outward * 1.25) * scrub;
-  car.vy = (car.vy - ny * outward * 1.25) * scrub;
-  const along = Math.atan2(sample.ty, sample.tx);
-  const forwardAlong = Math.cos(car.heading - along) >= 0 ? along : along + Math.PI;
-  car.heading = wrapAngle(car.heading + wrapAngle(forwardAlong - car.heading) * Math.min(1, dt * 8));
+  car.vx = (car.vx - nx * impulse) * scrub;
+  car.vy = (car.vy - ny * impulse) * scrub;
+  // Give a crawling car a way out of a square, zero-torque stall.
+  if (Math.abs(car.speed) < 45 && !car.engine.exploded) {
+    const along = Math.atan2(sample.ty, sample.tx);
+    const target = Math.cos(car.heading - along) >= 0 ? along : along + Math.PI;
+    car.heading = wrapAngle(car.heading + wrapAngle(target - car.heading) * Math.min(1, dt * 8));
+  }
+}
+
+/** Contact on one end of the two-circle car collider, in the car frame. */
+function circleContact(offset: number, radius: number, nx: number, ny: number): PanelContact {
+  return { x: offset + radius * nx, y: radius * ny, nx, ny };
 }
 
 function resolveCollisions(sim: RaceSim): void {
@@ -597,16 +642,26 @@ function resolveCollisions(sim: RaceSim): void {
       const a = cars[i] as CarSim;
       const b = cars[j] as CarSim;
       if (Math.abs(a.x - b.x) > 60 || Math.abs(a.y - b.y) > 60) continue;
-      for (const oa of [-CAR_CIRCLE_OFFSET, CAR_CIRCLE_OFFSET]) {
-        for (const ob of [-CAR_CIRCLE_OFFSET, CAR_CIRCLE_OFFSET]) {
-          const ax = a.x + Math.cos(a.heading) * oa;
-          const ay = a.y + Math.sin(a.heading) * oa;
-          const bx = b.x + Math.cos(b.heading) * ob;
-          const by = b.y + Math.sin(b.heading) * ob;
+      const shapeA = BODY_SHAPES[a.racer.look.body];
+      const shapeB = BODY_SHAPES[b.racer.look.body];
+      const ra = shapeA.width / 2;
+      const rb = shapeB.width / 2;
+      const endA = shapeA.length / 2 - ra;
+      const endB = shapeB.length / 2 - rb;
+      const fxA = Math.cos(a.heading);
+      const fyA = Math.sin(a.heading);
+      const fxB = Math.cos(b.heading);
+      const fyB = Math.sin(b.heading);
+      for (const oa of [-endA, endA]) {
+        for (const ob of [-endB, endB]) {
+          const ax = a.x + fxA * oa;
+          const ay = a.y + fyA * oa;
+          const bx = b.x + fxB * ob;
+          const by = b.y + fyB * ob;
           const dx = bx - ax;
           const dy = by - ay;
           const distance = Math.hypot(dx, dy);
-          const overlap = CAR_RADIUS * 2 - distance;
+          const overlap = ra + rb - distance;
           if (overlap <= 0 || distance < 1e-3) continue;
           const nx = dx / distance;
           const ny = dy / distance;
@@ -614,19 +669,24 @@ function resolveCollisions(sim: RaceSim): void {
           a.y -= ny * overlap * 0.5;
           b.x += nx * overlap * 0.5;
           b.y += ny * overlap * 0.5;
-          const relative = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-          if (relative < 0) {
-            const impulse = -relative * 0.65;
-            a.vx -= nx * impulse;
-            a.vy -= ny * impulse;
-            b.vx += nx * impulse;
-            b.vy += ny * impulse;
-            if (-relative > 50) {
-              const strength = clamp(-relative / 300, 0, 1);
-              sim.events.push({ type: 'bump', carId: a.id, strength });
-              sim.events.push({ type: 'bump', carId: b.id, strength });
-            }
-          }
+          const dvx = b.vx - a.vx;
+          const dvy = b.vy - a.vy;
+          // The radius is parallel to the normal, so only the circle offset gives leverage.
+          const lateralA = fxA * ny - fyA * nx;
+          const lateralB = fxB * ny - fyB * nx;
+          const armA = oa * lateralA;
+          const armB = ob * lateralB;
+          const closing = a.impactYaw * armA - b.impactYaw * armB - dvx * nx - dvy * ny;
+          if (closing < 0) continue;
+          const sliding = Math.abs(-dvx * ny + dvy * nx);
+          const impulse = closing * 1.3 / (2 + armA * armA * a.inverseInertia + armB * armB * b.inverseInertia);
+          a.vx -= nx * impulse;
+          a.vy -= ny * impulse;
+          b.vx += nx * impulse;
+          b.vy += ny * impulse;
+          const impact = { closing, slidingSpeed: sliding, impulse };
+          applyImpact(sim, a, circleContact(oa, ra, fxA * nx + fyA * ny, lateralA), impact, b);
+          applyImpact(sim, b, circleContact(ob, rb, -(fxB * nx + fyB * ny), -lateralB), impact, a);
         }
       }
     }
@@ -642,6 +702,7 @@ export function resetCarToTrack(sim: RaceSim, car: CarSim): void {
   car.vx = 0;
   car.vy = 0;
   car.steer = 0;
+  car.impactYaw = 0;
   car.lateral = 0;
 }
 
@@ -744,6 +805,7 @@ export function raceOutcome(sim: RaceSim, abandoned: boolean): RaceOutcome {
     time: player.finishTime ?? sim.time,
     topSpeedKmh: Math.round(player.topSpeed),
     wear: player.engine.wear,
+    bodyDamage: [...player.bodyDamage],
     standings,
     weather: sim.weather.id,
     ...(player.bestLap !== undefined ? { bestLap: player.bestLap } : {}),

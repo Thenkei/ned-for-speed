@@ -4,7 +4,8 @@ import type { GhostPose } from '../domain/ghost';
 import { createRng } from '../domain/rng';
 import { LAUNCH_TUNING } from '../domain/tuning';
 import type { CarLook } from '../domain/types';
-import { BODY_SHAPES, drawCar, rgba } from './carSprite';
+import { BODY_SHAPES } from './carBody';
+import { drawCar, rgba } from './carSprite';
 import { buildScenery, createSpeckPattern, drawSceneryItem, type Scenery } from './scenery';
 import { playerPosition, rankCars, type CarSim, type RaceSim } from './sim';
 import type { Track } from './track';
@@ -307,15 +308,15 @@ export class RaceRenderer {
     if (car.isPlayer) this.addShake(0.12 + strength * 0.25);
   }
 
-  sparks(car: CarSim, strength: number): void {
+  sparks(car: CarSim, strength: number, origin: { x: number; y: number } = car): void {
     const count = Math.round(3 + strength * 8);
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 60 + Math.random() * 180;
       this.spawn({
         kind: 'spark',
-        x: car.x,
-        y: car.y,
+        x: origin.x,
+        y: origin.y,
         vx: Math.cos(angle) * speed + car.vx * 0.5,
         vy: Math.sin(angle) * speed + car.vy * 0.5,
         life: 0,
@@ -679,6 +680,7 @@ export class RaceRenderer {
         headlights: true,
         time: this.clock + car.id,
         wrecked: car.engine.exploded,
+        scrapes: car.scrapes,
       });
       ctx.restore();
 

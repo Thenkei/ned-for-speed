@@ -228,7 +228,7 @@ function engineReadout(stats: Stats, condition: number): string {
   const profile = nitroProfile(engineSpecFrom(stats, condition));
   const seconds = (value: number): string => `${value.toFixed(1).replace('.', ',')} s`;
   if (profile.tank <= 0) {
-    return `<div class="engine-readout none"><p>🧪 Pas de kit nitro monté : aucun risque d’explosion… et aucune chance de doubler en ligne droite.</p></div>`;
+    return `<div class="engine-readout none"><p>🧪 Pas de kit nitro monté : aucun risque de surchauffe au nitro… et aucune chance de doubler en ligne droite.</p></div>`;
   }
   return `
     <div class="engine-readout">

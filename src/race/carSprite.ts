@@ -1,4 +1,5 @@
-import type { BodyKind, CarLook } from '../domain/types';
+import type { CarLook } from '../domain/types';
+import { BODY_SHAPES, type BodyShape, type Scrape } from './carBody';
 
 export interface CarDrawState {
   /** 0–1 brake light intensity. */
@@ -10,29 +11,10 @@ export interface CarDrawState {
   readonly headlights?: boolean;
   /** Animation clock in seconds. */
   readonly time?: number;
-  /** Charred wreck after an engine explosion. */
+  readonly scrapes?: readonly Scrape[];
+  /** Charred wreck after an explosion. */
   readonly wrecked?: boolean;
 }
-
-interface BodyShape {
-  readonly length: number;
-  readonly width: number;
-  /** Width of the nose / tail relative to the widest point. */
-  readonly nose: number;
-  readonly tail: number;
-  /** Cabin extent along the car, from the centre (negative = towards the rear). */
-  readonly cabinRear: number;
-  readonly cabinFront: number;
-}
-
-export const BODY_SHAPES: Readonly<Record<BodyKind, BodyShape>> = {
-  city: { length: 38, width: 19, nose: 0.8, tail: 0.9, cabinRear: -15, cabinFront: 7 },
-  hatch: { length: 42, width: 20, nose: 0.78, tail: 0.9, cabinRear: -16, cabinFront: 7 },
-  coupe: { length: 45, width: 20, nose: 0.74, tail: 0.84, cabinRear: -14, cabinFront: 6 },
-  sport: { length: 46, width: 21, nose: 0.7, tail: 0.86, cabinRear: -13, cabinFront: 6 },
-  muscle: { length: 50, width: 22, nose: 0.86, tail: 0.88, cabinRear: -15, cabinFront: 4 },
-  super: { length: 48, width: 23, nose: 0.62, tail: 0.92, cabinRear: -9, cabinFront: 9 },
-};
 
 function parseHex(hex: string): [number, number, number] {
   const clean = hex.replace('#', '');
@@ -225,6 +207,33 @@ export function drawCar(ctx: CanvasRenderingContext2D, look: CarLook, state: Car
     for (const side of [-1, 1] as const) {
       roundRect(ctx, -hl + 0.6, side * tw * 0.72 - 1.9, 2.2, 3.8, 0.8);
       ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (!wrecked && state.scrapes?.length) {
+    ctx.save();
+    bodyPath(ctx, shape);
+    ctx.clip();
+    for (const mark of state.scrapes) {
+      ctx.save();
+      ctx.translate(mark.x, mark.y);
+      ctx.rotate(mark.angle);
+      const half = mark.length / 2;
+      // Gouged paint and a narrower, exposed-metal edge.
+      ctx.beginPath();
+      ctx.moveTo(-half, 0);
+      ctx.lineTo(0, 0.6);
+      ctx.lineTo(half, -0.5);
+      ctx.strokeStyle = '#392f32';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.strokeStyle = '#d3c8b8';
+      ctx.lineWidth = 0.85;
+      ctx.stroke();
+      ctx.fillStyle = '#847c74';
+      ctx.fillRect(-half * 0.7, 1.4, half, 0.8);
+      ctx.restore();
     }
     ctx.restore();
   }

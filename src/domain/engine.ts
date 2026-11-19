@@ -1,4 +1,4 @@
-import type { Stats } from './types';
+import type { ExplosionCause, Stats } from './types';
 
 /**
  * Engine heat / nitro model.
@@ -33,6 +33,7 @@ export interface EngineState {
   readonly nitro: number;
   readonly nitroActive: boolean;
   readonly exploded: boolean;
+  readonly explosionCause?: ExplosionCause;
   /** Condition points lost so far in this race. */
   readonly wear: number;
 }
@@ -138,7 +139,8 @@ export function stepEngine(
   const overRed = heat > spec.redline ? (heat - spec.redline) / (MAX_HEAT - spec.redline) : 0;
   const wear = state.wear + overRed * 6 * dt;
 
-  return { heat, nitro, nitroActive: canSpray && !exploded, exploded, wear };
+  if (exploded) return { heat, nitro, nitroActive: false, exploded, explosionCause: 'overheat', wear };
+  return { heat, nitro, nitroActive: canSpray, exploded, wear };
 }
 
 /**

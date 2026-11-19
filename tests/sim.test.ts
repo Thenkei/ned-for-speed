@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RaceSetup, Racer, RivalSpec } from '../src/domain/types';
 import { DISTRICTS } from '../src/domain/world';
-import { createAutopilot, createRaceSim, raceOutcome, rankCars, stepRaceSim, type Controls } from '../src/race/sim';
+import { createAutopilot, createRaceSim, raceOutcome, rankCars, resetCarToTrack, stepRaceSim, type Controls } from '../src/race/sim';
 
 const DT = 1 / 120;
 const IDLE: Controls = { throttle: 0, brake: 0, steer: 0, nitro: false };
@@ -84,7 +84,7 @@ describe('race simulation', () => {
     for (let i = 0; i < 120 * 60 && sim.phase !== 'finished'; i++) {
       stepRaceSim(sim, { ...pilot(sim.player, DT), throttle: 1, nitro: true }, DT);
     }
-    expect(sim.player.engine.exploded).toBe(true);
+    expect(sim.player.engine.explosionCause).toBe('overheat');
     const outcome = raceOutcome(sim, false);
     expect(outcome.exploded).toBe(true);
     expect(outcome.position).toBe(sim.cars.length);
@@ -109,5 +109,55 @@ describe('race simulation', () => {
       for (const car of sim.cars) worst = Math.max(worst, Math.abs(car.lateral));
     }
     expect(worst).toBeLessThanOrEqual(sim.track.wallOffset);
+  });
+});
+
+describe('wall damage', () => {
+  function hitWall(speed: number, angle: number, side = 1) {
+    const sim = createRaceSim({ ...setupFor(0, 0, 45), rivals: [] });
+    sim.phase = 'racing';
+    const car = sim.player;
+    const index = 20;
+    const wall = sim.track.samples[index]!;
+    const lateral = side * (sim.track.wallOffset - 8);
+    car.x = wall.x + wall.nx * lateral;
+    car.y = wall.y + wall.ny * lateral;
+    car.heading = Math.atan2(wall.ty, wall.tx) + side * angle;
+    car.vx = speed * Math.cos(car.heading);
+    car.vy = speed * Math.sin(car.heading);
+    car.trackIndex = index;
+    car.s = wall.s;
+    stepRaceSim(sim, IDLE, DT);
+    return sim;
+  }
+
+  it('wrecks the car once on a fast square hit and records a wall DNF', () => {
+    const sim = hitWall(400, Math.PI / 2);
+    expect(sim.phase).toBe('finished');
+    expect(sim.player.finished).toBe(false);
+    expect(raceOutcome(sim, false)).toMatchObject({
+      exploded: true, explosionCause: 'wall', standings: [{ exploded: true, explosionCause: 'wall' }],
+    });
+    for (let i = 0; i < 120; i++) stepRaceSim(sim, IDLE, DT);
+    expect(sim.events.filter(event => event.type === 'explosion')).toHaveLength(1);
+  });
+
+  it.each([-1, 1])('scrapes the contacted side at the same speed on a shallow approach (side %i)', side => {
+    const sim = hitWall(400, 0.08, side);
+    expect(sim.phase).toBe('racing');
+    expect(sim.player.scrapes).toHaveLength(1);
+    const mark = sim.player.scrapes[0]!;
+    expect(mark.y * side).toBeGreaterThan(6);
+    expect(sim.events).toContainEqual(expect.objectContaining({ type: 'wall', sliding: true }));
+    resetCarToTrack(sim, sim.player);
+    stepRaceSim(sim, IDLE, DT);
+    expect(sim.player.scrapes).toEqual([mark]);
+  });
+
+  it('marks the nose on a slow square hit and ignores stationary contact', () => {
+    const sim = hitWall(80, Math.PI / 2);
+    expect(sim.phase).toBe('racing');
+    expect(sim.player.scrapes[0]?.x).toBeGreaterThan(15);
+    expect(hitWall(0, 0).player.scrapes).toHaveLength(0);
   });
 });

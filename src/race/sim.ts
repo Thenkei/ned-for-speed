@@ -37,7 +37,8 @@ import { createRng, type Rng } from '../domain/rng';
 import { WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
 import { applyWeather, weatherProfile } from '../domain/weather';
 import type { RaceOutcome, RaceSetup, RaceStanding, Racer } from '../domain/types';
-import { locate, maxCurvature, sampleAtDistance, trackById, type Track } from './track';
+import { BODY_SHAPES, markScrape, type Scrape } from './carBody';
+import { locate, maxCurvature, sampleAt, sampleAtDistance, trackById, type Track } from './track';
 
 /**
  * Race simulation: deterministic for a given seed and input sequence, with no
@@ -60,7 +61,7 @@ export interface Controls {
 export type SimEvent =
   | { readonly type: 'explosion'; readonly carId: number }
   | { readonly type: 'bump'; readonly carId: number; readonly strength: number }
-  | { readonly type: 'wall'; readonly carId: number; readonly strength: number }
+  | { readonly type: 'wall'; readonly carId: number; readonly strength: number; readonly x: number; readonly y: number; readonly sliding: boolean }
   | { readonly type: 'lap'; readonly carId: number; readonly lap: number; readonly lapTime: number }
   | { readonly type: 'finish'; readonly carId: number }
   | { readonly type: 'countdown'; readonly value: number }
@@ -116,6 +117,8 @@ export interface CarSim {
   topSpeed: number;
   wrongWayTime: number;
   onPavement: boolean;
+  readonly scrapes: Scrape[];
+  nextScrapeAt: number;
   readonly ai: AiState | undefined;
 }
 
@@ -140,6 +143,8 @@ export interface RaceSim {
 }
 
 const COUNTDOWN_SECONDS = 3.6;
+// Dashboard km/h directed into the wall. Along-wall motion does not contribute.
+const FATAL_WALL_SPEED = 100 / KMH_PER_PX_S;
 const CAR_RADIUS = 11;
 const CAR_CIRCLE_OFFSET = 12;
 /** After the first finisher, stragglers get this long before the race is called. */
@@ -214,6 +219,8 @@ function createCar(
     topSpeed: 0,
     wrongWayTime: 0,
     onPavement: false,
+    scrapes: [],
+    nextScrapeAt: 0,
     ai: isPlayer
       ? undefined
       : {
@@ -512,30 +519,7 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   }
   car.progress = car.lap * track.length + car.s;
 
-  // Wall: clamp to the corridor and kill the outward velocity.
-  const limit = track.wallOffset - 9;
-  if (Math.abs(car.lateral) > limit) {
-    const sample = sampleAtDistance(track, car.s);
-    const side = Math.sign(car.lateral);
-    const overshoot = Math.abs(car.lateral) - limit;
-    car.x -= sample.nx * side * overshoot;
-    car.y -= sample.ny * side * overshoot;
-    car.lateral = side * limit;
-    const outward = (car.vx * sample.nx + car.vy * sample.ny) * side;
-    if (outward > 0) {
-      car.vx -= sample.nx * side * outward * 1.25;
-      car.vy -= sample.ny * side * outward * 1.25;
-      // A square hit costs up to 45 % of the speed; brushing the wall only rubs a little off.
-      const scrub = (1 - clamp(outward / 500, 0, 0.45)) * Math.exp(-0.7 * dt);
-      car.vx *= scrub;
-      car.vy *= scrub;
-      if (outward > 45) sim.events.push({ type: 'wall', carId: car.id, strength: clamp(outward / 300, 0, 1) });
-      // Nudge the nose back along the road so the car does not grind into the wall.
-      const along = Math.atan2(sample.ty, sample.tx);
-      const forwardAlong = Math.cos(car.heading - along) >= 0 ? along : along + Math.PI;
-      car.heading = wrapAngle(car.heading + wrapAngle(forwardAlong - car.heading) * Math.min(1, dt * 8));
-    }
-  }
+  resolveWall(sim, car, fx, fy, dt);
 
   // Wrong way detection (player feedback only).
   const sampleHere = sampleAtDistance(track, car.s);
@@ -543,12 +527,67 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   car.wrongWayTime = alongSpeed < -25 ? car.wrongWayTime + dt : 0;
 
   // Finish line.
-  if (!car.finished && car.progress >= sim.setup.laps * track.length) {
+  if (!car.finished && !car.engine.exploded && car.progress >= sim.setup.laps * track.length) {
     car.finished = true;
     car.finishTime = sim.time;
     if (sim.firstFinishTime === undefined) sim.firstFinishTime = sim.time;
     sim.events.push({ type: 'finish', carId: car.id });
   }
+}
+
+function resolveWall(sim: RaceSim, car: CarSim, fx: number, fy: number, dt: number): void {
+  const shape = BODY_SHAPES[car.racer.look.body];
+  const clearance = sim.track.wallOffset - Math.abs(car.lateral);
+  const halfLength = shape.length / 2;
+  if (clearance > halfLength) return;
+
+  const sample = sampleAt(sim.track, car.trackIndex);
+  const side = Math.sign(car.lateral);
+  const nx = sample.nx * side;
+  const ny = sample.ny * side;
+  const localNx = nx * fx + ny * fy;
+  const localNy = -nx * fy + ny * fx;
+  // Support point of the oval footprint against the wall plane. Its projection
+  // gives the clearance needed for this body at its current heading.
+  const halfWidth = shape.width / 2;
+  const extent = Math.hypot(halfLength * localNx, halfWidth * localNy);
+  const penetration = extent - clearance;
+  if (penetration < 0) return;
+  car.x -= nx * penetration;
+  car.y -= ny * penetration;
+  car.lateral -= side * penetration;
+
+  const outward = car.vx * nx + car.vy * ny;
+  if (outward < 0) return;
+  const alongSpeed = Math.abs(car.vx * sample.tx + car.vy * sample.ty);
+  if (sim.phase === 'racing' && !car.finished && !car.engine.exploded) {
+    if (outward >= FATAL_WALL_SPEED) {
+      car.engine = { ...car.engine, exploded: true, explosionCause: 'wall', nitroActive: false };
+      sim.events.push({ type: 'explosion', carId: car.id });
+    } else if ((outward > 15 || alongSpeed > 25) && sim.time >= car.nextScrapeAt) {
+      const x = halfLength * halfLength * localNx / extent;
+      const y = halfWidth * halfWidth * localNy / extent;
+      const sliding = alongSpeed > outward;
+      const strength = clamp((sliding ? alongSpeed : outward) / FATAL_WALL_SPEED, 0, 1);
+      markScrape(car.scrapes, {
+        x: x - localNx * 1.3, y: y - localNy * 1.3,
+        angle: Math.atan2(localNx, -localNy), length: 3 + strength * (sliding ? 8 : 3),
+      });
+      sim.events.push({
+        type: 'wall', carId: car.id, strength, sliding,
+        x: car.x + fx * x - fy * y, y: car.y + fy * x + fx * y,
+      });
+      car.nextScrapeAt = sim.time + 0.14;
+    }
+  }
+
+  // Reflect the normal velocity and scrub some speed along the wall.
+  const scrub = (1 - clamp(outward / 500, 0, 0.45)) * Math.exp(-0.7 * dt);
+  car.vx = (car.vx - nx * outward * 1.25) * scrub;
+  car.vy = (car.vy - ny * outward * 1.25) * scrub;
+  const along = Math.atan2(sample.ty, sample.tx);
+  const forwardAlong = Math.cos(car.heading - along) >= 0 ? along : along + Math.PI;
+  car.heading = wrapAngle(car.heading + wrapAngle(forwardAlong - car.heading) * Math.min(1, dt * 8));
 }
 
 function resolveCollisions(sim: RaceSim): void {
@@ -693,12 +732,14 @@ export function raceOutcome(sim: RaceSim, abandoned: boolean): RaceOutcome {
     isPlayer: car.isPlayer,
     position: index + 1,
     exploded: car.engine.exploded,
+    ...(car.engine.explosionCause && { explosionCause: car.engine.explosionCause }),
     ...(car.finishTime !== undefined ? { time: car.finishTime } : {}),
   }));
   return {
     position: abandoned ? sim.cars.length : ranked.indexOf(player) + 1,
     racers: sim.cars.length,
     exploded: player.engine.exploded,
+    ...(player.engine.explosionCause && { explosionCause: player.engine.explosionCause }),
     abandoned,
     time: player.finishTime ?? sim.time,
     topSpeedKmh: Math.round(player.topSpeed),

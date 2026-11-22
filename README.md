@@ -66,16 +66,24 @@ aussi bien à la racine d'un domaine que sous `/<repo>/`.
 
 ## Commandes
 
-| Action | Clavier | Tactile |
-| --- | --- | --- |
-| Accélérer | ↑ ou W (Z en AZERTY) | automatique |
-| Freiner / marche arrière | ↓ ou S | FREIN |
-| Tourner | ← → ou A D (Q D en AZERTY) | ◀ ▶ |
-| Nitro | Espace ou Maj | NITRO |
-| Monter en régime au départ | ↑ ou W pendant le compte à rebours | NITRO pendant le compte à rebours |
-| Monter / descendre un rapport (boîte manuelle) | E / Q (E / A en AZERTY) | + / − |
-| Revenir sur la route | R | — |
-| Pause | Échap ou P | Ⅱ |
+| Action | Clavier | Tactile | Manette |
+| --- | --- | --- | --- |
+| Accélérer | ↑ ou W (Z en AZERTY) | automatique | RT (progressif) |
+| Freiner / marche arrière | ↓ ou S | FREIN | LT (progressif) |
+| Tourner | ← → ou A D (Q D en AZERTY) | ◀ ▶ | stick gauche ou croix |
+| Nitro | Espace ou Maj | NITRO | Ⓐ |
+| Monter en régime au départ | ↑ ou W pendant le compte à rebours | NITRO pendant le compte à rebours | RT dosé pendant le compte à rebours |
+| Monter / descendre un rapport (boîte manuelle) | E / Q (E / A en AZERTY) | + / − | RB / LB |
+| Revenir sur la route | R | ↺ | Ⓨ |
+| Burnout après l'arrivée | maintenir B | maintenir le bouton | maintenir Ⓑ |
+| Pause | Échap ou P | Ⅱ | Start |
+
+La manette (disposition standard : Xbox, PlayStation, la plupart des manettes USB/Bluetooth) se
+branche à tout moment : le navigateur ne la signale qu'après un premier appui. Les gâchettes sont
+progressives, ce qui permet de *tenir* le régime dans la zone verte au départ au lieu de tapoter, et
+de doser l'accélérateur pour sortir du patinage. Les conseils à l'écran suivent le dernier appareil
+utilisé, et la manette vibre aux chocs, à l'explosion et au départ quand elle le peut. Les menus se
+pilotent encore à la souris ou au clavier.
 
 La partie est sauvegardée automatiquement dans le navigateur (`localStorage`).
 
@@ -85,7 +93,7 @@ La partie est sauvegardée automatiquement dans le navigateur (`localStorage`).
 src/domain   Règles du jeu, pures et testées : état, réducteurs (Result), pièces, bijoux,
              quartiers, modèle thermique du moteur. Aucun accès au DOM ni à l'horloge.
 src/race     Course : circuits (splines), simulation déterministe (physique, IA, tours),
-             rendu Canvas 2D, entrées clavier/tactile.
+             rendu Canvas 2D, entrées clavier/tactile/manette.
 src/ui       Menus en DOM : titre, garage, casse, concession, bijouterie, duels, résultats.
 src/infra    Sauvegarde localStorage et sons procéduraux (WebAudio).
 scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts` :

@@ -1,10 +1,16 @@
 import type { ShiftRequest } from '../domain/drivetrain';
+import { IDLE_PAD, pickPad, readPad, type PadReading, type Rumble } from './gamepad';
 import type { Controls } from './sim';
 
 /**
- * Keyboard + touch input. Keys are matched on `event.code` (physical position)
- * so that WASD works on a French AZERTY keyboard as ZQSD without configuration.
+ * Keyboard + touch + gamepad input. Keys are matched on `event.code` (physical
+ * position) so that WASD works on a French AZERTY keyboard as ZQSD without
+ * configuration. The gamepad is polled once per frame (`poll`); the mapping
+ * itself lives in `gamepad.ts`.
  */
+
+/** The device the player last used: drives the hints and the touch auto-throttle. */
+export type InputDevice = 'keyboard' | 'touch' | 'gamepad';
 
 const KEY_BINDINGS: Readonly<Record<string, keyof KeyState>> = {
   ArrowUp: 'up',
@@ -38,8 +44,10 @@ interface KeyState {
 }
 
 export interface RaceInput {
-  /** True on touch devices, where the on-screen pad replaces the keyboard. */
-  readonly touch: boolean;
+  /** The device the player last used (touch screens start on 'touch'). */
+  device(): InputDevice;
+  /** Reads the gamepad. Call once per frame, before the `consume*` and `read` calls. */
+  poll(): void;
   read(): Controls;
   /** True once, the frame after the player asked for it. */
   consumePause(): boolean;
@@ -47,6 +55,8 @@ export interface RaceInput {
   showFinishControls(): void;
   /** Gear change requested since the last call (the latest wins). */
   consumeShift(): ShiftRequest;
+  /** Vibrates the gamepad, if that is what the player is driving with and it can. */
+  rumble(effect: Rumble): void;
   dispose(): void;
 }
 
@@ -64,6 +74,12 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
   let pauseRequested = false;
   let resetRequested = false;
   let shiftRequested: ShiftRequest = 0;
+  // Touch pad: only shown on coarse pointers; throttle is automatic there.
+  const isTouch = window.matchMedia('(pointer: coarse)').matches;
+  let device: InputDevice = isTouch ? 'touch' : 'keyboard';
+  let pad: PadReading = IDLE_PAD;
+  let padPressed: readonly boolean[] | undefined;
+  let padIndex: number | undefined;
   const abort = new AbortController();
   const { signal } = abort;
 
@@ -76,6 +92,7 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
     const binding = KEY_BINDINGS[event.code];
     if (binding) {
       keys[binding] = down;
+      if (down) device = 'keyboard';
       event.preventDefault();
       return;
     }
@@ -106,11 +123,10 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
     { signal },
   );
 
-  // Touch pad: only shown on coarse pointers; throttle is automatic there.
-  const isTouch = window.matchMedia('(pointer: coarse)').matches;
-  let pad: HTMLElement | undefined;
+  let touchPad: HTMLElement | undefined;
   if (isTouch) {
-    pad = document.createElement('div');
+    const pad = document.createElement('div');
+    touchPad = pad;
     pad.className = 'race-touch';
     const button = (label: string, key: keyof KeyState, className: string): HTMLButtonElement => {
       const element = document.createElement('button');
@@ -120,6 +136,7 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
       element.setAttribute('aria-label', key);
       const set = (value: boolean) => (event: Event) => {
         touch[key] = value;
+        if (value) device = 'touch';
         event.preventDefault();
       };
       element.addEventListener('pointerdown', set(true), { signal });
@@ -174,16 +191,46 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
     host.append(pad);
   }
 
+  // A pad unplugged mid-race must not leave the throttle stuck down.
+  window.addEventListener(
+    'gamepaddisconnected',
+    (event) => {
+      if (event.gamepad.index !== padIndex) return;
+      pad = IDLE_PAD;
+      padPressed = undefined;
+      padIndex = undefined;
+    },
+    { signal },
+  );
+
   return {
-    touch: isTouch,
+    device: () => device,
+    poll(): void {
+      const found = typeof navigator.getGamepads === 'function' ? pickPad(navigator.getGamepads()) : undefined;
+      if (!found) {
+        pad = IDLE_PAD;
+        padPressed = undefined;
+        padIndex = undefined;
+        return;
+      }
+      if (found.index !== padIndex) padPressed = undefined;
+      padIndex = found.index;
+      pad = readPad(found, padPressed);
+      padPressed = pad.pressed;
+      if (pad.active) device = 'gamepad';
+      if (pad.pause) pauseRequested = true;
+      if (pad.reset) resetRequested = true;
+      if (pad.shift !== 0) shiftRequested = pad.shift;
+    },
     showFinishControls(): void {
       if (burnButton) return;
-      pad?.remove();
+      touchPad?.remove();
       const button = document.createElement('button');
       burnButton = button;
       button.type = 'button';
       button.className = 'race-burnout';
-      button.innerHTML = `<strong>${isTouch ? 'Maintenir pour un burnout' : 'Burnout · maintenir B'}</strong><small>Risque de casse moteur</small>`;
+      const hold = device === 'touch' ? 'Maintenir pour un burnout' : device === 'gamepad' ? 'Burnout · maintenir Ⓑ' : 'Burnout · maintenir B';
+      button.innerHTML = `<strong>${hold}</strong><small>Risque de casse moteur</small>`;
       button.addEventListener('pointerdown', event => {
         if (!event.isPrimary || event.button !== 0) return;
         event.preventDefault();
@@ -206,13 +253,17 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
       const left = keys.left || touch.left;
       const right = keys.right || touch.right;
       const brake = keys.down || touch.down;
-      const throttle = keys.up || (isTouch && !brake);
+      const throttle = keys.up || (device === 'touch' && !brake);
+      // Keys and pad combine: the stronger input wins, a held key overrides the stick.
+      const digitalSteer = (right ? 1 : 0) - (left ? 1 : 0);
+      const analogSteer = digitalSteer === 0 && pad.analogSteer;
       return {
-        burnout: keyBurn || pointerBurn,
-        throttle: throttle ? 1 : 0,
-        brake: brake ? 1 : 0,
-        steer: (right ? 1 : 0) - (left ? 1 : 0),
-        nitro: keys.nitro || touch.nitro,
+        burnout: keyBurn || pointerBurn || (burnButton !== undefined && pad.burnout),
+        throttle: Math.max(throttle ? 1 : 0, pad.throttle),
+        brake: Math.max(brake ? 1 : 0, pad.brake),
+        steer: digitalSteer !== 0 ? digitalSteer : pad.steer,
+        nitro: keys.nitro || touch.nitro || pad.nitro,
+        ...(analogSteer && { analogSteer }),
       };
     },
     consumePause(): boolean {
@@ -230,9 +281,17 @@ export function createRaceInput(host: HTMLElement, options: RaceInputOptions = {
       shiftRequested = 0;
       return value;
     },
+    rumble(effect: Rumble): void {
+      if (device !== 'gamepad' || padIndex === undefined) return;
+      const actuator = navigator.getGamepads()[padIndex]?.vibrationActuator;
+      // Not every pad (or browser) can rumble; a refusal is not worth a log line.
+      actuator
+        ?.playEffect('dual-rumble', { duration: effect.durationMs, strongMagnitude: effect.strong, weakMagnitude: effect.weak })
+        .catch(() => undefined);
+    },
     dispose(): void {
       abort.abort();
-      pad?.remove();
+      touchPad?.remove();
       burnButton?.remove();
     },
   };

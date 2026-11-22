@@ -2,7 +2,7 @@ import './race.css';
 import type { ShiftRequest } from '../domain/drivetrain';
 import { ghostPose, GhostRecorder, SECTORS_PER_LAP, splitDelta, type GhostRun } from '../domain/ghost';
 import type { LaunchEnd, LaunchGrade } from '../domain/launch';
-import type { TransmissionMode } from '../domain/tuning';
+import { DRIFT_TUNING, type TransmissionMode } from '../domain/tuning';
 import type { RaceOutcome, RaceSetup, Racer } from '../domain/types';
 import { audio } from '../infra/audio';
 import {
@@ -18,6 +18,7 @@ import {
 } from '../infra/engineProfiles';
 import { engineSoundParams, RIVAL_SOUND, rivalSoundParams } from '../infra/engineSound';
 import { CrashReplay, REPLAY_SPEED } from './crashReplay';
+import { driftNitroShare, type DriftFailure } from './drift';
 import { impactRumble, RUMBLES, SLIDE_RUMBLE_EVERY, slideRumble } from './gamepad';
 import { createRaceInput, type InputDevice } from './input';
 import { RaceRenderer, formatTime } from './render';
@@ -60,6 +61,12 @@ const LAUNCH_BANNERS: Readonly<Record<LaunchGrade, { text: string; sub?: string;
 
 const LAUNCH_END_BANNERS: Partial<Record<LaunchEnd, { text: string; color: string }>> = {
   cancelled: { text: 'Grip retrouvé', color: '#4dff6a' },
+};
+
+const DRIFT_FAILURES: Readonly<Record<DriftFailure, string>> = {
+  contact: 'Contact : un drift propre ne touche rien',
+  'off-road': 'Sorti de la piste',
+  scrubbed: 'Trop de vitesse perdue : glisse moins large',
 };
 
 /** Driving tips worded for the device the player is actually using. */
@@ -447,6 +454,21 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
             }
             if (car?.isPlayer) audio.race('shift', event.direction);
             break;
+          case 'drift': {
+            if (!car?.isPlayer) break;
+            const { outcome } = event;
+            if (outcome.kind === 'clean') {
+              const sub = event.nitroGained > 0
+                ? `+${Math.round((event.nitroGained / car.engineSpec.nitroTank) * 100)} % nitro`
+                : car.engineSpec.nitroTank > 0 ? 'Bouteille déjà pleine' : 'Propre !';
+              renderer.showBanner({ text: 'DRIFT !', sub, color: '#2ff3ff', ttl: 1.3, big: false });
+              audio.race('drift');
+              input.rumble(RUMBLES.driftPaid);
+            } else {
+              renderer.showBanner({ text: 'Drift gâché', sub: DRIFT_FAILURES[outcome.reason], color: '#9a9ab4', ttl: 1.1, big: false });
+            }
+            break;
+          }
           case 'finish':
             break;
         }
@@ -669,6 +691,13 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           input.rumble(slideRumble(player.drift));
           slideRumbleIn = SLIDE_RUMBLE_EVERY;
         }
+        // Live drift counter: what the drift in progress would pay, once it counts.
+        const run = player.driftRun;
+        renderer.setDriftLabel(
+          run && run.seconds >= DRIFT_TUNING.minSeconds && player.engineSpec.nitroTank > 0
+            ? `DRIFT +${Math.round(driftNitroShare(run.score) * 100)} %`
+            : undefined,
+        );
         debug.hint = pickHint(elapsed);
         renderer.setHint(debug.hint);
         renderer.render(elapsed);

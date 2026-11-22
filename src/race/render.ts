@@ -102,6 +102,8 @@ export class RaceRenderer {
   private dpr = 1;
   private banner: Banner | undefined;
   private hint: string | undefined;
+  /** Live drift counter above Ned ("DRIFT +12 %"), while a drift is building. */
+  private driftLabel: string | undefined;
   /** Time trial: the record's car and where its ghost is now. */
   private ghost: { readonly look: CarLook; readonly recordTime: number } | undefined;
   private ghostPose: GhostPose | undefined;
@@ -215,6 +217,10 @@ export class RaceRenderer {
   }
 
   /** One-line driving tip shown at the bottom of the screen (undefined hides it). */
+  setDriftLabel(label: string | undefined): void {
+    this.driftLabel = label;
+  }
+
   setHint(hint: string | undefined): void {
     this.hint = hint;
   }
@@ -716,6 +722,19 @@ export class RaceRenderer {
       });
       ctx.restore();
 
+      if (car.isPlayer && this.driftLabel) {
+        ctx.save();
+        ctx.translate(car.x, car.y - 34);
+        ctx.scale(1 / this.zoom, 1 / this.zoom);
+        ctx.font = `italic 900 15px ${FONT}`;
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        ctx.strokeText(this.driftLabel, 0, 0);
+        ctx.fillStyle = '#2ff3ff';
+        ctx.fillText(this.driftLabel, 0, 0);
+        ctx.restore();
+      }
       if (!car.isPlayer) {
         ctx.save();
         ctx.translate(car.x, car.y - 30);

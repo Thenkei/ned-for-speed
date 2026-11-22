@@ -20,6 +20,7 @@ export type RaceSound =
   | 'bog'
   | 'wheelspin'
   | 'grip'
+  | 'drift'
   | 'shift'
   | 'blowoff'
   | 'bang';
@@ -331,6 +332,11 @@ const RACE_SOUNDS: Readonly<Record<RaceSound, (strength: number) => void>> = {
     burst(0.35, 0.18, 3200, 1400);
   },
   grip: () => tone({ frequency: 520, to: 880, duration: 0.12, type: 'triangle', volume: 0.12 }),
+  // A clean drift paid out: a quick rising "cha-ching" towards the nitro.
+  drift: () => {
+    [659, 988, 1319].forEach((frequency, i) => tone({ frequency, duration: 0.1, delay: i * 0.05, type: 'triangle', volume: 0.14 }));
+    tone({ frequency: 1760, to: 2637, duration: 0.18, delay: 0.15, type: 'sine', volume: 0.07 });
+  },
   // Blow-off valve venting the boost; `strength` > 0 adds the big turbo's flutter ("tchu-tu-tu").
   blowoff: (strength) => blowOff(strength),
   // Pop-and-bang map: an exhaust backfire; `strength` 0–1.

@@ -223,6 +223,41 @@ export const HANDLING_TUNING: HandlingTuning = {
   aiGripUse: [0.97, 1.06],
 };
 
+// ───────────────────────── Drift rewards ─────────────────────────
+
+/**
+ * A *controlled* slide pays: held long enough, at speed, on the road,
+ * without touching anything, and caught without killing the speed, it
+ * refills part of the nitro bottle. A sloppy one (contact, off the road,
+ * ploughed to a crawl) pays nothing, and the slide still cost its speed.
+ */
+export interface DriftTuning {
+  /** Slide (`CarSim.drift`, 0–1) that counts as drifting rather than a twitch. */
+  readonly minDrift: number;
+  /** Speed (px/s) to start a drift: parking-lot wiggles do not count. */
+  readonly minSpeed: number;
+  /** Seconds of counted drift before a drift pays. */
+  readonly minSeconds: number;
+  /** Seconds back on grip that end a drift (the sliding flag flickers on the limit). */
+  readonly settleSeconds: number;
+  /** Exit speed as a share of the entry speed below which the drift was a plough, not a drift. */
+  readonly minExitSpeedShare: number;
+  /** Share of the nitro bottle earned per second of drift at full angle (`drift` 1). */
+  readonly nitroPerDriftSecond: number;
+  /** Most of the bottle one drift can refill. */
+  readonly maxNitroShare: number;
+}
+
+export const DRIFT_TUNING: DriftTuning = {
+  minDrift: 0.25,
+  minSpeed: 180,
+  minSeconds: 0.4,
+  settleSeconds: 0.15,
+  minExitSpeedShare: 0.55,
+  nitroPerDriftSecond: 0.2,
+  maxNitroShare: 0.3,
+};
+
 // ───────────────────────── Weather ─────────────────────────
 
 export type Weather = 'dry' | 'wet';

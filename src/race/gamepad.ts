@@ -179,4 +179,5 @@ export const RUMBLES = {
   explosion: { strong: 1, weak: 1, durationMs: 700 },
   perfectStart: { strong: 0.25, weak: 0.5, durationMs: 140 },
   wheelspin: { strong: 0.15, weak: 0.55, durationMs: 450 },
+  driftPaid: { strong: 0.3, weak: 0.3, durationMs: 120 },
 } as const satisfies Readonly<Record<string, Rumble>>;

@@ -8,9 +8,10 @@
  *
  * Usage: npx vite-node scripts/handling-probe.ts   (WEATHER=wet for the rain)
  *   HANDLING='{"steerOverdrive":1.2}'  tries other tunables;
- *   LEGACY=1                            approximates the old never-slide model.
+ *   LEGACY=1                            approximates the old never-slide model;
+ *   DRIFT='{"nitroPerDriftSecond":0}'  tries other drift rewards (0 = none).
  */
-import { HANDLING_TUNING, type HandlingTuning, type Weather } from '../src/domain/tuning';
+import { DRIFT_TUNING, HANDLING_TUNING, type HandlingTuning, type Weather } from '../src/domain/tuning';
 import type { RaceSetup, Racer, RivalSpec, Stats } from '../src/domain/types';
 import { DISTRICTS } from '../src/domain/world';
 import { createAutopilot, createRaceSim, stepRaceSim, type CarSim, type Controls } from '../src/race/sim';
@@ -19,7 +20,8 @@ const DT = 1 / 120;
 const weather = (process.env['WEATHER'] ?? 'dry') as Weather;
 const legacy: Partial<HandlingTuning> = { tyreHeadroom: 1, steerOverdrive: 1, slidingGrip: 1, brakingGripLoss: 0, powerOversteer: 0, slideScrub: 0, aiGripUse: [1, 1] };
 Object.assign(HANDLING_TUNING, process.env['LEGACY'] ? legacy : {}, JSON.parse(process.env['HANDLING'] ?? '{}'));
-console.log('handling', JSON.stringify(HANDLING_TUNING));
+Object.assign(DRIFT_TUNING, JSON.parse(process.env['DRIFT'] ?? '{}'));
+console.log('handling', JSON.stringify(HANDLING_TUNING), 'drift', JSON.stringify(DRIFT_TUNING));
 
 const toRacer = (r: RivalSpec): Racer => ({
   name: r.name,
@@ -38,6 +40,8 @@ const ned = (level: number, skill: number): Racer => {
 type Driver = 'tidy' | 'too-fast' | 'keyboard' | 'tapping';
 
 interface Tally {
+  clean: number;
+  failed: number;
   steps: number;
   sliding: number;
   walls: number;
@@ -47,7 +51,7 @@ interface Tally {
 function race(setup: RaceSetup, driver: Driver): { ned: Tally & { time: number | undefined; why: string }; rivals: Map<number, Tally> } {
   const sim = createRaceSim(setup);
   const pilot = createAutopilot(sim);
-  const tallies = new Map<CarSim, Tally>(sim.cars.map((car) => [car, { steps: 0, sliding: 0, walls: 0, maxDrift: 0 }]));
+  const tallies = new Map<CarSim, Tally>(sim.cars.map((car) => [car, { clean: 0, failed: 0, steps: 0, sliding: 0, walls: 0, maxDrift: 0 }]));
   let held: Controls = { throttle: 0, brake: 0, steer: 0, nitro: false };
   let tapDebt = 0;
   for (let step = 0; sim.phase !== 'finished' && step < 120 * 600; step++) {
@@ -77,6 +81,7 @@ function race(setup: RaceSetup, driver: Driver): { ned: Tally & { time: number |
     for (const event of sim.events) {
       const car = sim.cars.find((c) => c.id === (event as { carId?: number }).carId);
       if (event.type === 'wall' && car) tallies.get(car)!.walls++;
+      if (event.type === 'drift' && car) tallies.get(car)![event.outcome.kind === 'clean' ? 'clean' : 'failed']++;
     }
     sim.events.length = 0;
     if (sim.phase !== 'racing') continue;
@@ -107,16 +112,16 @@ for (const district of DISTRICTS) {
       rivals: event.rivals.map(toRacer), seed: 7, weather,
     };
     const { ned: n, rivals } = race(setup, driver);
-    line.push(`${driver.slice(0, 3)} slide ${pct(n)} max ${n.maxDrift.toFixed(2)} walls ${String(n.walls).padStart(2)} time ${n.time?.toFixed(1) ?? `DNF(${n.why})`}`);
+    line.push(`${driver.slice(0, 3)} slide ${pct(n)} drifts ${n.clean}/${n.failed} walls ${String(n.walls).padStart(2)} time ${n.time?.toFixed(1) ?? `DNF(${n.why})`}`);
     if (driver === 'tidy') {
       for (const [reck, t] of rivals) {
         const key = reck.toFixed(2);
-        const sum = byReck.get(key) ?? { steps: 0, sliding: 0, walls: 0, maxDrift: 0 };
-        byReck.set(key, { steps: sum.steps + t.steps, sliding: sum.sliding + t.sliding, walls: sum.walls + t.walls, maxDrift: Math.max(sum.maxDrift, t.maxDrift) });
+        const sum = byReck.get(key) ?? { clean: 0, failed: 0, steps: 0, sliding: 0, walls: 0, maxDrift: 0 };
+        byReck.set(key, { clean: sum.clean + t.clean, failed: sum.failed + t.failed, steps: sum.steps + t.steps, sliding: sum.sliding + t.sliding, walls: sum.walls + t.walls, maxDrift: Math.max(sum.maxDrift, t.maxDrift) });
       }
     }
   }
   console.log(`${district.id.padEnd(9)} ${line.join('  |  ')}`);
 }
 console.log(`\nRivals (${weather}) by recklessness:`);
-for (const [reck, t] of [...byReck].sort()) console.log(`  ${reck}: slide ${pct(t)} max ${t.maxDrift.toFixed(2)} walls ${t.walls}`);
+for (const [reck, t] of [...byReck].sort()) console.log(`  ${reck}: slide ${pct(t)} max ${t.maxDrift.toFixed(2)} walls ${t.walls} drifts clean/failed ${t.clean}/${t.failed}`);

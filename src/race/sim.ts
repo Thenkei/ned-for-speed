@@ -33,6 +33,7 @@ import {
   type LaunchPlan,
   type LaunchState,
 } from '../domain/launch';
+import { stepDrift, type DriftOutcome, type DriftRun } from './drift';
 import { fullLockYaw, oversteerYaw, resolveTyres, slideAngle, tyreGrip } from './handling';
 import { createRng, type Rng } from '../domain/rng';
 import { HANDLING_TUNING, WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
@@ -73,7 +74,9 @@ export type SimEvent =
   | { readonly type: 'go' }
   | { readonly type: 'launch'; readonly carId: number; readonly grade: LaunchGrade }
   | { readonly type: 'launch-end'; readonly carId: number; readonly grade: LaunchGrade; readonly endedBy: LaunchEnd }
-  | { readonly type: 'shift'; readonly carId: number; readonly gear: number; readonly direction: ShiftRequest };
+  | { readonly type: 'shift'; readonly carId: number; readonly gear: number; readonly direction: ShiftRequest }
+  /** A drift ended: clean ones refilled `nitroShare` of the bottle. */
+  | { readonly type: 'drift'; readonly carId: number; readonly outcome: DriftOutcome; readonly nitroGained: number };
 
 interface AiState {
   lane: number;
@@ -112,6 +115,10 @@ export interface CarSim {
   sliding: boolean;
   /** 0–1 how far the car is sliding (slide angle), for the effects and hints. */
   drift: number;
+  /** The drift in progress, if any (see drift.ts): a clean one refills nitro. */
+  driftRun: DriftRun | undefined;
+  /** Race time of the last real contact (wall or car): it spoils a drift. */
+  lastContactAt: number;
   trackIndex: number;
   s: number;
   lateral: number;
@@ -222,6 +229,8 @@ function createCar(
     slip: 0,
     sliding: false,
     drift: 0,
+    driftRun: undefined,
+    lastContactAt: Number.NEGATIVE_INFINITY,
     trackIndex: location.index,
     s: location.s,
     lateral: location.lateral,
@@ -408,6 +417,36 @@ export function createAutopilot(sim: RaceSim, launch: LaunchPlan = perfectLaunch
 
 // ───────────────────────── Physics ─────────────────────────
 
+/** Follows the car's slide; a clean drift refills part of the nitro bottle. */
+function stepCarDrift(sim: RaceSim, car: CarSim, speed: number, dt: number): void {
+  if (sim.phase !== 'racing' || car.finished || car.engine.exploded) {
+    car.driftRun = undefined;
+    return;
+  }
+  const step = stepDrift(
+    car.driftRun,
+    {
+      sliding: car.sliding,
+      drift: car.drift,
+      speed: Math.max(0, speed),
+      offRoad: car.onPavement,
+      // Car-to-car contacts are resolved after the cars move: allow for one step.
+      contact: car.lastContactAt >= sim.time - 1.5 * dt,
+    },
+    dt,
+  );
+  car.driftRun = step.run;
+  if (!step.outcome) return;
+  let nitroGained = 0;
+  if (step.outcome.kind === 'clean' && car.engineSpec.nitroTank > 0) {
+    const tank = car.engineSpec.nitroTank;
+    const nitro = Math.min(tank, car.engine.nitro + step.outcome.nitroShare * tank);
+    nitroGained = nitro - car.engine.nitro;
+    car.engine = { ...car.engine, nitro };
+  }
+  sim.events.push({ type: 'drift', carId: car.id, outcome: step.outcome, nitroGained });
+}
+
 /** Reach of full lock past the grip: Ned on keys/touch gets the speed-sensitive (digital) one. */
 function steerOverdrive(car: CarSim, analog: boolean): number {
   return car.isPlayer && !analog ? HANDLING_TUNING.digitalSteerOverdrive : HANDLING_TUNING.steerOverdrive;
@@ -566,6 +605,8 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
 
   resolveWall(sim, car, fx, fy, dt);
 
+  stepCarDrift(sim, car, forward, dt);
+
   // Wrong way detection (player feedback only).
   const sampleHere = sampleAtDistance(track, car.s);
   const alongSpeed = car.vx * sampleHere.tx + car.vy * sampleHere.ty;
@@ -602,6 +643,7 @@ function applyImpact(sim: RaceSim, car: CarSim, contact: PanelContact, impact: I
   // r × impulse. Limit the kick so the driver can catch it with countersteer.
   car.impactYaw = clamp(car.impactYaw + (y * nx - x * ny) * impulse * car.inverseInertia, -2, 2);
   if (closing <= 15 && slidingSpeed <= 25) return;
+  car.lastContactAt = sim.time;
 
   const dent = closing >= DENT_SPEED;
   const sliding = !dent && slidingSpeed > closing;

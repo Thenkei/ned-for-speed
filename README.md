@@ -35,9 +35,19 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
   tours. Trop haut : ça patine jusqu'à ~5 s ; relâcher puis réaccélérer rend le grip aussitôt.
   Un mauvais départ coûte du temps, jamais le moteur. Les adversaires jouent le même jeu : plus
   ils sont doués, plus leur départ est précis (les gamins du parking ratent souvent le leur).
+- **Tenue de route** : les pneus ont une limite. Un virage pris trop vite, un freinage appuyé en
+  plein virage, et la voiture glisse : le nez rentre, la voiture part large, la vitesse fond. Un
+  pneu qui glisse accroche moins qu'un pneu qui roule, donc une glisse s'entretient : il faut lever
+  le pied et braquer moins (ou contre-braquer) pour la rattraper, et accélérer dedans fait chasser
+  l'arrière. Garde-fous d'arcade : l'angle de glisse est plafonné (pas de tête-à-queue) et sous la
+  limite la voiture se conduit comme avant. Au clavier et au tactile la direction est
+  « progressive » (une touche maintenue va un peu au-delà de la limite, un coup de touche non) ;
+  au stick elle va plus loin, plus précise et plus risquée. Traces de pneus, crissement, vibration
+  de la manette et un conseil pour les premières glisses.
 - **Pluie** : certaines courses (tirées au sort, annoncées avant le départ) se courent sous la pluie :
-  moins de grip en virage, freinages plus longs, glissades qui durent, motricité limitée (la nitro
-  fait patiner). Pluie, flaques, gerbes d'eau et chaussée luisante à l'écran. La pluie nivelle :
+  ça glisse. Le volant tourne autant qu'au sec mais les pneus tiennent moins (les glisses arrivent
+  ~20 % plus tôt), une glisse sur l'eau se rattrape plus difficilement et l'accélérateur fait plus
+  chasser l'arrière ; freinages plus longs, motricité limitée (la nitro fait patiner). Pluie, flaques, gerbes d'eau et chaussée luisante à l'écran. La pluie nivelle :
   le favori gagne moins souvent, l'outsider a sa chance ; en échange la prime est majorée de 50 %.
   Les deux premières courses restent au sec.
 - **Contre la montre** : dans chaque quartier débloqué, trois tours seul en piste, au sec ou sous
@@ -100,7 +110,9 @@ scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts`
              `balance` rejoue toutes les courses sans affichage (une graine), `winrate` mesure
              le taux de victoire de Ned sur N graines par écart de niveau (`SEEDS=20
              WEATHER=wet`), `keyboard-bot` vérifie qu'un pilotage « tout ou rien » au clavier
-             reste compétitif, `track-info` contrôle la géométrie des circuits.
+             reste compétitif, `handling-probe` mesure combien chaque type de pilote glisse
+             (IA, clavier tout ou rien, clavier tapoté ; `HANDLING='{...}'` pour essayer
+             d'autres réglages), `track-info` contrôle la géométrie des circuits.
 ```
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
@@ -119,7 +131,8 @@ Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
 | `LAUNCH_TUNING` | fenêtres de régime au feu vert (`underRevBelow`, `perfect`, `overRevFrom`), boost du départ parfait (×1,3 pendant 1,6 s), calage (×0,55), patinage (×0,5, 2,5 à 5 s), seuils relâché/appuyé |
 | `RIVAL_LAUNCH_TUNING` | erreur de timing des adversaires au départ (±1,8 s × (1 − habileté)), temps de réaction pour rattraper un patinage |
 | `WHEELSPIN_TUNING` | perte de grip latéral quand ça patine, rendement d'un pneu qui patine, léger dandinement |
-| `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, motricité, décalage du seuil de patinage, durée du patinage, multiplicateur de prime (×1,5 sous la pluie) |
+| `HANDLING_TUNING` | tenue de route : marge de grip réelle des pneus, portée du braquage au-delà de la limite (stick 1,3, clavier/tactile 1,15), grip d'un pneu qui glisse, grip perdu au freinage, survirage à l'accélération, angle de glisse maximal, vitesse perdue en glisse, grip exploité par les adversaires selon leur témérité |
+| `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, grip en glisse et survirage (pluie), motricité, décalage du seuil de patinage, durée du patinage, multiplicateur de prime (×1,5 sous la pluie) |
 | `FORECAST_TUNING` | probabilité de pluie d'une course de carrière |
 | `ENGINE_SOUND_PROFILES` (`src/infra/engineProfiles.ts`) | la voix de chaque carrosserie : nombre de cylindres (hauteur = tr/min × cylindres / 120), harmoniques, glouglou, brillance, grain, pétarades, résonances d'échappement, distribution variable, turbo (sifflement, temps de réponse, dump valve) |
 | `popsAndBangsLevel`, `POPS_AND_BANGS` (`src/infra/engineProfiles.ts`) | turbo monté → niveau pop & bang (gros + maison = 1, gros = 0,4, maison = 0,3) ; régime minimal, durée et cadence de la rafale après un lever de pied |
@@ -130,9 +143,16 @@ Les modèles sont purs et testés : `drivetrain.ts` (rapports, régime), `launch
 du départ), `weather.ts` (application de la météo à la fiche de conduite, prévisions déterministes),
 `src/infra/engineSound.ts` (régime, patinage, glisse → paramètres de synthèse). La météo agit sur
 la `DriveSpec` de chaque voiture : la physique du joueur **et** l'IA (qui planifie ses vitesses de
-virage et de freinage à partir de cette fiche) s'adaptent sans cas particulier. Par temps sec et en boîte
-automatique, la physique est identique au bit près à celle d'avant ces mécaniques ; seul l'effet du
-départ change le résultat d'une course. Le départ de chaque adversaire est tiré d'un flux aléatoire
+virage et de freinage à partir de cette fiche) s'adaptent sans cas particulier.
+
+La tenue de route (`src/race/handling.ts`, pur et testé) : les pneus ne peuvent tourner l'*élan*
+de la voiture qu'à la vitesse que permet leur grip (accélération latérale = vitesse × vitesse de
+rotation), alors que le volant peut tourner le *nez* un peu plus loin. Demander plus que le grip
+fait glisser ; un pneu qui glisse garde moins de grip (`slidingGrip`), ce qui rend la glisse
+« collante » jusqu'à ce que le pilote relâche. Sous la limite, le modèle est exactement celui
+d'avant (test dédié). Les adversaires dosent leur braquage sur le grip qu'ils s'autorisent (un peu
+au-delà pour les plus téméraires) et tiennent compte du freinage ; leur volant est mis à l'échelle et
+non plafonné, pour que leur pilotage garde le même gain quelle que soit la portée du braquage. Le départ de chaque adversaire est tiré d'un flux aléatoire
 propre (dérivé de la graine de la course) : la séquence aléatoire de la course n'est pas décalée.
 
 ### Contre la montre
@@ -153,6 +173,12 @@ habileté de 0,9, départ compris) — victoires sur 400 courses :
 | Avant ces mécaniques | 2 | 32 | 227 |
 | Sec | 1 | 38 | 218 |
 | Pluie | 3 | 38 | 138 |
+| Sec, avec la tenue de route | 2 | 40 | 184 |
+| Pluie, avec la tenue de route | 3 | 24 | 124 |
+
+Sur 40 graines (800 courses), la tenue de route laisse l'outsider et le match nul inchangés et fait
+gagner le favori ~10 % moins souvent, au sec comme sous la pluie (rapport pluie/sec du favori
+inchangé : 0,63) : une voiture plus rapide passe plus de temps à la limite.
 
 Toutes les marques, modèles et personnages sont inventés. Les illustrations de `public/assets`
 ont été générées pour le projet ; les sons sont synthétisés à la volée.

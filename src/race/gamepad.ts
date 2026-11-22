@@ -166,6 +166,15 @@ export function impactRumble(strength: number, sliding: boolean): Rumble | undef
     : { strong: 0.3 + 0.7 * s, weak: 0.2 + 0.4 * s, durationMs: Math.round(80 + 220 * s) };
 }
 
+/** Seconds between two slide rumble pulses (each lasts a little longer, so they chain). */
+export const SLIDE_RUMBLE_EVERY = 0.2;
+
+/** Rumble while sliding (`drift` 0–1): a buzz that grows with the slide angle. */
+export function slideRumble(drift: number): Rumble {
+  const d = clamp(finite(drift), 0, 1);
+  return { strong: 0.05 + 0.3 * d, weak: 0.2 + 0.4 * d, durationMs: Math.round(SLIDE_RUMBLE_EVERY * 1000 + 40) };
+}
+
 export const RUMBLES = {
   explosion: { strong: 1, weak: 1, durationMs: 700 },
   perfectStart: { strong: 0.25, weak: 0.5, durationMs: 140 },

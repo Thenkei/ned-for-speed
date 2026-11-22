@@ -161,6 +161,68 @@ export const WHEELSPIN_TUNING: WheelspinTuning = {
   fishtailHz: 1.3,
 };
 
+// ───────────────────────── Handling (grip limit, slides) ─────────────────────────
+
+/**
+ * Arcade-with-consequences handling. The tyres can turn the car's *momentum*
+ * only as fast as their grip allows (a friction circle), while the steering
+ * can turn its *nose* a bit further than that: ask for more than the tyres
+ * hold — too fast for the corner, braking hard while turning — and the car
+ * slides. A sliding tyre grips less than a rolling one, so a slide feeds
+ * itself until the driver lifts, steers less or countersteers.
+ *
+ * Arcade guard-rails: the slide angle is capped (the car never spins round
+ * and ends up facing the wrong way), and below the limit the car drives
+ * exactly as before.
+ */
+export interface HandlingTuning {
+  /** Grip the tyres really have, as a share of `DriveSpec.grip` (the "safe" cornering limit). */
+  readonly tyreHeadroom: number;
+  /** How far past `DriveSpec.grip` full lock can ask with progressive steering (stick, AI). 1 = never slide. */
+  readonly steerOverdrive: number;
+  /**
+   * Same with all-or-nothing steering (keyboard, touch): speed-sensitive, a
+   * held key reaches only a little past the grip. Too fast for the corner
+   * still slides; flicking a key on a straight does not.
+   */
+  readonly digitalSteerOverdrive: number;
+  /** Share of the grip a sliding tyre keeps (kinetic vs static friction): the slide feeds itself. */
+  readonly slidingGrip: number;
+  /** Share of the cornering grip lost under full braking (combined grip). */
+  readonly brakingGripLoss: number;
+  /** Extra yaw (rad/s) at full throttle in a full slide: power oversteer, the tail steps out. */
+  readonly powerOversteer: number;
+  /** Largest slide angle (rad): past it the tyres "catch" the car, so it never spins round. */
+  readonly maxSlideAngle: number;
+  /** Extra speed scrubbed while sliding (share of the grip, × sin of the slide angle). */
+  readonly slideScrub: number;
+  /** Slide angle (rad) at which `drift` reads 1, for the effects and hints. */
+  readonly fullDriftAngle: number;
+  /**
+   * Rivals keep their steering within this share of `DriveSpec.grip`, from
+   * recklessness 0 to 1: careful drivers never slide, reckless ones overcook
+   * a corner now and then.
+   */
+  readonly aiGripUse: readonly [number, number];
+}
+
+// Tuned with scripts/handling-probe.ts: AI drivers slide ~1 % of the time, a
+// keyboard player tapping ←/→ 2–10 %, one holding full lock 7–21 % (and loses
+// time for it). scripts/winrate.ts (40 seeds): underdog and even races as
+// before, the favourite wins ~10 % less often; the rain ratio is unchanged.
+export const HANDLING_TUNING: HandlingTuning = {
+  tyreHeadroom: 1.04,
+  steerOverdrive: 1.3,
+  digitalSteerOverdrive: 1.15,
+  slidingGrip: 0.85,
+  brakingGripLoss: 0.15,
+  powerOversteer: 0.9,
+  maxSlideAngle: 0.95,
+  slideScrub: 0.55,
+  fullDriftAngle: 0.5,
+  aiGripUse: [0.97, 1.06],
+};
+
 // ───────────────────────── Weather ─────────────────────────
 
 export type Weather = 'dry' | 'wet';
@@ -176,6 +238,10 @@ export interface WeatherProfile {
   readonly slipRecoveryMultiplier: number;
   /** Longitudinal traction limit as a share of the cornering grip (Infinity = never limited). */
   readonly tractionShareOfGrip: number;
+  /** Scales the grip a *sliding* tyre keeps: on water a slide is harder to catch. */
+  readonly slidingGripMultiplier: number;
+  /** Scales the power oversteer: on water the tail steps out more on the throttle. */
+  readonly oversteerMultiplier: number;
   /** Shifts the over-rev threshold of the race start (negative = spins sooner). */
   readonly overRevShift: number;
   /** Scales how long launch wheelspin lasts. */
@@ -193,6 +259,8 @@ export const WEATHER_PROFILES: Readonly<Record<Weather, WeatherProfile>> = {
     brakeMultiplier: 1,
     slipRecoveryMultiplier: 1,
     tractionShareOfGrip: Number.POSITIVE_INFINITY,
+    slidingGripMultiplier: 1,
+    oversteerMultiplier: 1,
     overRevShift: 0,
     wheelspinDurationMultiplier: 1,
     prizeMultiplier: 1,
@@ -208,6 +276,11 @@ export const WEATHER_PROFILES: Readonly<Record<Weather, WeatherProfile>> = {
     brakeMultiplier: 0.7,
     slipRecoveryMultiplier: 0.7,
     tractionShareOfGrip: 0.36,
+    // Slippery: the steering still turns the nose as far as in the dry (see
+    // `steerGrip` in sim.ts) while the tyres hold less, so slides come sooner,
+    // last longer, and the throttle swings the tail further.
+    slidingGripMultiplier: 0.8,
+    oversteerMultiplier: 1.6,
     overRevShift: -0.06,
     wheelspinDurationMultiplier: 1.25,
     prizeMultiplier: 1.5,

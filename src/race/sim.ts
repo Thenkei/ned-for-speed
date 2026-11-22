@@ -33,8 +33,9 @@ import {
   type LaunchPlan,
   type LaunchState,
 } from '../domain/launch';
+import { fullLockYaw, oversteerYaw, resolveTyres, slideAngle, tyreGrip } from './handling';
 import { createRng, type Rng } from '../domain/rng';
-import { WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
+import { HANDLING_TUNING, WHEELSPIN_TUNING, type TransmissionMode, type WeatherProfile } from '../domain/tuning';
 import { applyWeather, weatherProfile } from '../domain/weather';
 import type { PanelMark, RaceOutcome, RaceSetup, RaceStanding, Racer } from '../domain/types';
 import { planFinishStop, stepFinishStop, type FinishStop } from './finishStop';
@@ -107,6 +108,10 @@ export interface CarSim {
   /** Forward speed (px/s) and sideways slip speed, refreshed every step. */
   speed: number;
   slip: number;
+  /** True while the tyres are past their grip: the car slides (and grips less until caught). */
+  sliding: boolean;
+  /** 0–1 how far the car is sliding (slide angle), for the effects and hints. */
+  drift: number;
   trackIndex: number;
   s: number;
   lateral: number;
@@ -215,6 +220,8 @@ function createCar(
     controls: { ...NEUTRAL },
     speed: 0,
     slip: 0,
+    sliding: false,
+    drift: 0,
     trackIndex: location.index,
     s: location.s,
     lateral: location.lateral,
@@ -324,7 +331,8 @@ function aiDriving(sim: RaceSim, car: CarSim, ai: AiState, dt: number): Controls
   const tx = target.x + target.nx * ai.lane;
   const ty = target.y + target.ny * ai.lane;
   const desired = Math.atan2(ty - car.y, tx - car.x);
-  const steer = clamp(wrapAngle(desired - car.heading) * 2.6, -1, 1);
+  /** -1…1 share of the grip the driver wants to turn with (scaled to the wheel below). */
+  const turn = clamp(wrapAngle(desired - car.heading) * 2.6, -1, 1);
 
   // Speed planning: the fastest speed that still lets the car brake for every bend in range.
   const cornerGrip = drive.grip * racer.skill;
@@ -350,7 +358,19 @@ function aiDriving(sim: RaceSim, car: CarSim, ai: AiState, dt: number): Controls
   else if (speed > targetSpeed + 12) brake = clamp((speed - targetSpeed) / 70, 0.35, 1);
   else throttle = 0.4;
   // Do not floor it sideways.
-  if (Math.abs(steer) > 0.9 && speed > 140) throttle = Math.min(throttle, 0.6);
+  if (Math.abs(turn) > 0.9 && speed > 140) throttle = Math.min(throttle, 0.6);
+
+  // Drivers steer within the grip they trust (full lock can ask for more than
+  // the tyres hold): the reckless ones overcook a corner now and then, and
+  // everyone knows the brakes take some of it. The wheel is *scaled*, not
+  // clamped, so the pursuit gain in yaw terms stays the same whatever the
+  // steering's reach (weather, overdrive).
+  const [careful, reckless] = HANDLING_TUNING.aiGripUse;
+  const gripUse = (careful + (reckless - careful) * clamp(racer.recklessness, 0, 1)) * (1 - HANDLING_TUNING.brakingGripLoss * brake * brake);
+  const surface = car.onPavement ? 0.7 : 1;
+  const trusted = Math.min(drive.steerRate, (drive.grip * surface * gripUse) / Math.max(speed, 70));
+  const reach = fullLockYaw(drive.steerRate, drive.grip / sim.weather.gripMultiplier, surface, speed, steerOverdrive(car, false));
+  const steer = turn * Math.min(1, trusted / reach);
   // Feather the throttle at the traction limit (wet road) instead of spinning up.
   if (throttle > 0 && Number.isFinite(drive.traction)) {
     const ratio = clamp(speed / drive.maxSpeed, 0, 1);
@@ -388,6 +408,11 @@ export function createAutopilot(sim: RaceSim, launch: LaunchPlan = perfectLaunch
 
 // ───────────────────────── Physics ─────────────────────────
 
+/** Reach of full lock past the grip: Ned on keys/touch gets the speed-sensitive (digital) one. */
+function steerOverdrive(car: CarSim, analog: boolean): number {
+  return car.isPlayer && !analog ? HANDLING_TUNING.digitalSteerOverdrive : HANDLING_TUNING.steerOverdrive;
+}
+
 function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   const { track } = sim;
   const { drive } = car;
@@ -413,16 +438,31 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   let forward = car.vx * fx + car.vy * fy;
   let lateral = -car.vx * fy + car.vy * fx;
 
-  // Steering: yaw rate is capped by grip, so fast cars need room (or handling parts).
+  // Grip: the road, the driven wheels spinning (last step's value: one step of
+  // lag is invisible), and the brakes, which share the tyres with the corner.
+  const surfaceGrip = (car.onPavement ? 0.7 : 1) * (1 - car.wheelspin * WHEELSPIN_TUNING.gripLoss);
+  const grip = tyreGrip({
+    grip: drive.grip,
+    surface: surfaceGrip,
+    braking: forward > 8 ? brake : 0,
+    sliding: car.sliding,
+    slidingGripMultiplier: sim.weather.slidingGripMultiplier,
+  });
+
+  // Steering: the nose turns up to `steerOverdrive` × the safe cornering limit,
+  // so fast cars need room (or handling parts), and holding full lock in a
+  // corner taken too fast asks more of the tyres than they have.
   // A keyboard is all-or-nothing: ease the player's wheel in so taps do not snap the car sideways.
   // A stick is already progressive, and the easing would only add lag.
   const steerResponse = car.isPlayer && !input.analogSteer ? 7 : 14;
   car.steer += (clamp(input.steer, -1, 1) - car.steer) * Math.min(1, dt * steerResponse);
   const absForward = Math.abs(forward);
-  // Spinning rear tyres have less to give sideways (last step's value: one step of lag is invisible).
-  const surfaceGrip = (car.onPavement ? 0.7 : 1) * (1 - car.wheelspin * WHEELSPIN_TUNING.gripLoss);
-  const maxYaw = Math.min(drive.steerRate, (drive.grip * surfaceGrip) / Math.max(absForward, 70));
+  // The wheel turns as far as on a dry road; on a wet one the tyres hold less (slides come sooner).
+  const steerGrip = drive.grip / sim.weather.gripMultiplier;
+  const maxYaw = fullLockYaw(drive.steerRate, steerGrip, surfaceGrip, absForward, steerOverdrive(car, input.analogSteer === true));
   let yaw = car.steer * maxYaw * clamp(absForward / 45, 0, 1) * (forward >= 0 ? 1 : -1);
+  // Power oversteer: on the throttle in a slide the tail keeps stepping out. Lift, or countersteer.
+  yaw += oversteerYaw(car.sliding, slideAngle(forward, lateral), throttle, car.drift, sim.weather.oversteerMultiplier);
   if (car.wheelspin > 0) {
     // A gentle, deterministic fishtail: the car squirms but always goes where it is pointed.
     yaw += car.wheelspin * WHEELSPIN_TUNING.fishtailYaw * Math.sin(2 * Math.PI * WHEELSPIN_TUNING.fishtailHz * sim.time) * clamp(absForward / 60, 0, 1);
@@ -461,20 +501,12 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
   forward += acceleration * dt;
   if (throttle === 0 && brake === 0 && Math.abs(forward) < 6) forward = 0;
 
-  // Tyres: grip swings the velocity back in line with the nose. Going forward
-  // this *redirects* the momentum (a tyre's side force does no work) and only
-  // scrubs a little speed in proportion to the slide, so steering inputs do
-  // not cost speed by themselves — braking too late and understeering does.
-  const recovery = Math.exp(-drive.slipRecovery * surfaceGrip * dt);
-  if (forward > 25) {
-    const total = Math.hypot(forward, lateral);
-    const slipAngle = Math.atan2(lateral, forward) * recovery;
-    const scrub = 1 - Math.min(0.9, Math.abs(Math.sin(slipAngle)) * 0.9) * dt;
-    forward = total * Math.cos(slipAngle) * scrub;
-    lateral = total * Math.sin(slipAngle) * scrub;
-  } else {
-    lateral *= recovery;
-  }
+  // Tyres: the momentum follows the nose, as fast as the grip allows (handling.ts).
+  const tyres = resolveTyres({ forward, lateral }, grip, Math.exp(-drive.slipRecovery * surfaceGrip * dt), dt);
+  forward = tyres.forward;
+  lateral = tyres.lateral;
+  car.sliding = tyres.sliding;
+  car.drift = tyres.drift;
 
   car.vx = forward * fx - lateral * fy;
   car.vy = forward * fy + lateral * fx;

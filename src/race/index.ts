@@ -18,7 +18,7 @@ import {
 } from '../infra/engineProfiles';
 import { engineSoundParams, RIVAL_SOUND, rivalSoundParams } from '../infra/engineSound';
 import { CrashReplay, REPLAY_SPEED } from './crashReplay';
-import { impactRumble, RUMBLES } from './gamepad';
+import { impactRumble, RUMBLES, SLIDE_RUMBLE_EVERY, slideRumble } from './gamepad';
 import { createRaceInput, type InputDevice } from './input';
 import { RaceRenderer, formatTime } from './render';
 import { maxCurvature } from './track';
@@ -68,6 +68,8 @@ const HINTS: Readonly<Record<InputDevice, {
   /** Under the "PATINAGE !" banner. */
   readonly spinFix: string;
   readonly wheelspin: string;
+  /** The car is sliding (cornered too fast): how to catch it. */
+  readonly slide: string;
   readonly stuck: string;
   readonly basics: string;
   readonly wall: string;
@@ -78,6 +80,7 @@ const HINTS: Readonly<Record<InputDevice, {
     launch: 'Départ : appuie sur ↑ quand le « 1 » s’affiche, aiguille dans le vert',
     spinFix: 'Relâche ↑ puis réaccélère',
     wheelspin: 'Ça patine ! Relâche ↑ et réappuie pour reprendre du grip',
+    slide: 'Ça glisse ! Lâche ↑ et braque moins (ou contre-braque)',
     stuck: 'Coincé ? Appuie sur R pour revenir sur la route',
     basics: '↑ accélérer · ← → tourner · ↓ freiner',
     wall: 'Tu frottes le mur : tourne (← →) pour revenir au milieu',
@@ -88,6 +91,7 @@ const HINTS: Readonly<Record<InputDevice, {
     launch: 'Départ : maintiens NITRO quand le « 1 » s’affiche, aiguille dans le vert',
     spinFix: 'Touche FREIN un instant',
     wheelspin: 'Ça patine ! Touche FREIN un instant pour reprendre du grip',
+    slide: 'Ça glisse ! Touche FREIN un instant et braque moins',
     stuck: 'Coincé ? Touche ↺ pour revenir sur la route',
     basics: '◀ ▶ pour tourner · la voiture accélère toute seule',
     wall: 'Tu frottes le mur : tourne (◀ ▶) pour revenir au milieu',
@@ -98,6 +102,7 @@ const HINTS: Readonly<Record<InputDevice, {
     launch: 'Départ : dose RT pour garder l’aiguille dans le vert au « 1 »',
     spinFix: 'Relâche RT puis réaccélère',
     wheelspin: 'Ça patine ! Relâche RT et réappuie pour reprendre du grip',
+    slide: 'Ça glisse ! Relâche RT et braque moins (ou contre-braque)',
     stuck: 'Coincé ? Appuie sur Ⓨ pour revenir sur la route',
     basics: 'RT accélérer · stick gauche tourner · LT freiner',
     wall: 'Tu frottes le mur : tourne (stick gauche) pour revenir au milieu',
@@ -454,12 +459,19 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     window.__nedRace = debug;
 
     // Driving tips: "stuck" help is always on, the rest only for Ned's first races.
-    const coach = { usedNitro: false, wallHits: 0, lastWallAt: -Infinity, stuckFor: 0, grindingFor: 0 };
+    const coach = { usedNitro: false, wallHits: 0, lastWallAt: -Infinity, stuckFor: 0, grindingFor: 0, sliding: false, slides: 0 };
+    /** Slides explained per race, even after the coached races: the grip limit is not obvious. */
+    const SLIDE_HINTS_PER_RACE = 3;
     const pickHint = (elapsed: number): string | undefined => {
       const player = sim.player;
       if (player.engine.exploded || player.finished || sim.phase === 'finished') return undefined;
       const hints = HINTS[input.device()];
       if (sim.phase === 'racing' && player.launch?.phase === 'wheelspin' && player.controls.throttle > 0) return hints.wheelspin;
+      // A real slide (not a twitch): count it once, explain the first few.
+      const bigSlide = sim.phase === 'racing' && player.sliding && player.drift > 0.4;
+      if (bigSlide && !coach.sliding) coach.slides++;
+      coach.sliding = bigSlide || (coach.sliding && player.sliding);
+      if (coach.sliding && (setup.coach || coach.slides <= SLIDE_HINTS_PER_RACE)) return hints.slide;
       if (sim.phase === 'racing') {
         // Stuck = trying to move and not moving (not simply parked off the throttle).
         const pushing = player.controls.throttle > 0 || player.controls.brake > 0;
@@ -501,6 +513,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
       renderer.backfire(car, strength);
     };
     let smoothedAcceleration = 0;
+    let slideRumbleIn = 0;
 
     const tick = (now: number): void => {
       if (disposed) return;
@@ -650,6 +663,12 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           ),
         );
 
+        // The tyres letting go, through the hands (pads that can rumble).
+        slideRumbleIn -= elapsed;
+        if (player.sliding && sim.phase === 'racing' && slideRumbleIn <= 0) {
+          input.rumble(slideRumble(player.drift));
+          slideRumbleIn = SLIDE_RUMBLE_EVERY;
+        }
         debug.hint = pickHint(elapsed);
         renderer.setHint(debug.hint);
         renderer.render(elapsed);

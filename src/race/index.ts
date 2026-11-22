@@ -18,7 +18,8 @@ import {
 } from '../infra/engineProfiles';
 import { engineSoundParams, RIVAL_SOUND, rivalSoundParams } from '../infra/engineSound';
 import { CrashReplay, REPLAY_SPEED } from './crashReplay';
-import { createRaceInput } from './input';
+import { impactRumble, RUMBLES } from './gamepad';
+import { createRaceInput, type InputDevice } from './input';
 import { RaceRenderer, formatTime } from './render';
 import { maxCurvature } from './track';
 import {
@@ -53,11 +54,56 @@ const LAUNCH_BANNERS: Readonly<Record<LaunchGrade, { text: string; sub?: string;
   perfect: { text: 'DÉPART PARFAIT !', sub: 'Turbo au départ', color: '#4dff6a' },
   good: undefined,
   under: { text: 'DÉPART MOU…', sub: 'Pas assez de tours : le moteur cale', color: '#9ab4ff' },
-  over: { text: 'PATINAGE !', sub: 'Relâche ↑ puis réaccélère', color: '#ff9a2f' },
+  // `sub` depends on the device: filled in from HINTS when shown.
+  over: { text: 'PATINAGE !', color: '#ff9a2f' },
 };
 
 const LAUNCH_END_BANNERS: Partial<Record<LaunchEnd, { text: string; color: string }>> = {
   cancelled: { text: 'Grip retrouvé', color: '#4dff6a' },
+};
+
+/** Driving tips worded for the device the player is actually using. */
+const HINTS: Readonly<Record<InputDevice, {
+  readonly launch: string;
+  /** Under the "PATINAGE !" banner. */
+  readonly spinFix: string;
+  readonly wheelspin: string;
+  readonly stuck: string;
+  readonly basics: string;
+  readonly wall: string;
+  readonly brake: string;
+  readonly nitro: string;
+}>> = {
+  keyboard: {
+    launch: 'Départ : appuie sur ↑ quand le « 1 » s’affiche, aiguille dans le vert',
+    spinFix: 'Relâche ↑ puis réaccélère',
+    wheelspin: 'Ça patine ! Relâche ↑ et réappuie pour reprendre du grip',
+    stuck: 'Coincé ? Appuie sur R pour revenir sur la route',
+    basics: '↑ accélérer · ← → tourner · ↓ freiner',
+    wall: 'Tu frottes le mur : tourne (← →) pour revenir au milieu',
+    brake: 'Freine (↓) avant les virages : trop vite, ça ne tourne plus',
+    nitro: 'Ligne droite : maintiens ESPACE pour la nitro',
+  },
+  touch: {
+    launch: 'Départ : maintiens NITRO quand le « 1 » s’affiche, aiguille dans le vert',
+    spinFix: 'Touche FREIN un instant',
+    wheelspin: 'Ça patine ! Touche FREIN un instant pour reprendre du grip',
+    stuck: 'Coincé ? Touche ↺ pour revenir sur la route',
+    basics: '◀ ▶ pour tourner · la voiture accélère toute seule',
+    wall: 'Tu frottes le mur : tourne (◀ ▶) pour revenir au milieu',
+    brake: 'Freine avant les virages : trop vite, ça ne tourne plus',
+    nitro: 'Ligne droite : maintiens NITRO',
+  },
+  gamepad: {
+    launch: 'Départ : dose RT pour garder l’aiguille dans le vert au « 1 »',
+    spinFix: 'Relâche RT puis réaccélère',
+    wheelspin: 'Ça patine ! Relâche RT et réappuie pour reprendre du grip',
+    stuck: 'Coincé ? Appuie sur Ⓨ pour revenir sur la route',
+    basics: 'RT accélérer · stick gauche tourner · LT freiner',
+    wall: 'Tu frottes le mur : tourne (stick gauche) pour revenir au milieu',
+    brake: 'Freine (LT) avant les virages : trop vite, ça ne tourne plus',
+    nitro: 'Ligne droite : maintiens Ⓐ pour la nitro',
+  },
 };
 
 const STEP = 1 / 120;
@@ -113,6 +159,10 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         <p class="race-pause__keys">
           <b>↑ / W</b> accélérer · <b>↓ / S</b> freiner · <b>← → / A D</b> tourner<br>
           <b>Espace / Maj</b> nitro · <b>R</b> se remettre sur la route · <b>Échap</b> pause${gearKeys}
+        </p>
+        <p class="race-pause__keys">
+          🎮 <b>RT / LT</b> accélérer / freiner · <b>stick gauche</b> tourner · <b>Ⓐ</b> nitro<br>
+          <b>Ⓨ</b> se remettre sur la route · <b>Start</b> pause${transmission === 'manual' ? ' · <b>RB / LB</b> rapports' : ''}
         </p>
         <button type="button" class="btn btn--primary" data-action="resume">Reprendre</button>
         <button type="button" class="btn btn--danger" data-action="abandon">Abandonner la course</button>
@@ -319,6 +369,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
             if (!car) break;
             renderer.explode(car);
             audio.race('explosion');
+            if (car.isPlayer) input.rumble(RUMBLES.explosion);
             if (car.isPlayer) {
               if (car.engine.explosionCause === 'burnout') {
                 input.dispose();
@@ -341,6 +392,8 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
             renderer.sparks(car, event.strength, event);
             if (car.isPlayer) {
               audio.race(event.sliding ? 'scrape' : 'bump', event.strength);
+              const rumble = impactRumble(event.strength, event.sliding);
+              if (rumble) input.rumble(rumble);
               if (event.type === 'wall') {
                 coach.wallHits++;
                 coach.lastWallAt = sim.time;
@@ -359,12 +412,15 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           case 'launch': {
             if (!car?.isPlayer) break;
             const banner = LAUNCH_BANNERS[event.grade];
-            if (banner) renderer.showBanner({ ...banner, ttl: 1.6, big: false });
+            const sub = event.grade === 'over' ? HINTS[input.device()].spinFix : banner?.sub;
+            if (banner) renderer.showBanner({ ...banner, ...(sub !== undefined && { sub }), ttl: 1.6, big: false });
             if (event.grade === 'perfect') {
               audio.race('perfect-start');
               renderer.boostFlash(car);
+              input.rumble(RUMBLES.perfectStart);
             } else if (event.grade === 'over') {
               audio.race('wheelspin');
+              input.rumble(RUMBLES.wheelspin);
             } else if (event.grade === 'under') {
               audio.race('bog');
             }
@@ -402,43 +458,29 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
     const pickHint = (elapsed: number): string | undefined => {
       const player = sim.player;
       if (player.engine.exploded || player.finished || sim.phase === 'finished') return undefined;
-      const touch = input.touch;
-      if (sim.phase === 'racing' && player.launch?.phase === 'wheelspin' && player.controls.throttle > 0) {
-        return touch ? 'Ça patine ! Touche FREIN un instant pour reprendre du grip' : 'Ça patine ! Relâche ↑ et réappuie pour reprendre du grip';
-      }
+      const hints = HINTS[input.device()];
+      if (sim.phase === 'racing' && player.launch?.phase === 'wheelspin' && player.controls.throttle > 0) return hints.wheelspin;
       if (sim.phase === 'racing') {
         // Stuck = trying to move and not moving (not simply parked off the throttle).
         const pushing = player.controls.throttle > 0 || player.controls.brake > 0;
         coach.stuckFor = pushing && Math.abs(player.speed) < 25 ? coach.stuckFor + elapsed : 0;
-        if (coach.stuckFor > 2 && sim.time > 3) {
-          return touch ? 'Coincé ? Touche ↺ pour revenir sur la route' : 'Coincé ? Appuie sur R pour revenir sur la route';
-        }
+        if (coach.stuckFor > 2 && sim.time > 3) return hints.stuck;
         const onWall = Math.abs(player.lateral) > sim.track.wallOffset - 12;
         coach.grindingFor = onWall ? coach.grindingFor + elapsed : 0;
       }
       if (!setup.coach) return undefined;
-      if (sim.phase === 'countdown') {
-        return touch
-          ? 'Départ : maintiens NITRO quand le « 1 » s’affiche, aiguille dans le vert'
-          : 'Départ : appuie sur ↑ quand le « 1 » s’affiche, aiguille dans le vert';
-      }
-      if (sim.time < 3) {
-        return touch ? '◀ ▶ pour tourner · la voiture accélère toute seule' : '↑ accélérer · ← → tourner · ↓ freiner';
-      }
-      if (coach.grindingFor > 0.8) {
-        return touch ? 'Tu frottes le mur : tourne (◀ ▶) pour revenir au milieu' : 'Tu frottes le mur : tourne (← →) pour revenir au milieu';
-      }
+      if (sim.phase === 'countdown') return hints.launch;
+      if (sim.time < 3) return hints.basics;
+      if (coach.grindingFor > 0.8) return hints.wall;
       if (player.engine.nitroActive) coach.usedNitro = true;
       const spec = player.engineSpec;
       if (player.engine.heat > spec.redline) return undefined; // The overheat banner says it louder.
       if (player.engine.nitroActive && player.engine.heat > spec.redline - 14) {
         return 'Relâche la nitro avant le rouge et laisse refroidir';
       }
-      if (sim.time - coach.lastWallAt < 4 && coach.wallHits >= 2) {
-        return touch ? 'Freine avant les virages : trop vite, ça ne tourne plus' : 'Freine (↓) avant les virages : trop vite, ça ne tourne plus';
-      }
+      if (sim.time - coach.lastWallAt < 4 && coach.wallHits >= 2) return hints.brake;
       if (!coach.usedNitro && spec.nitroTank > 0 && maxCurvature(sim.track, player.s, player.s + 320) < 0.0016) {
-        return touch ? 'Ligne droite : maintiens NITRO' : 'Ligne droite : maintiens ESPACE pour la nitro';
+        return hints.nitro;
       }
       return undefined;
     };
@@ -471,6 +513,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
           playReplay(elapsed);
           return;
         }
+        input.poll();
         if (input.consumePause()) setPaused(!paused);
         const wantsReset = input.consumeReset();
         if (paused) return;
@@ -484,7 +527,7 @@ export function runRace(host: HTMLElement, setup: RaceSetup, options: RaceOption
         let controls = input.read();
         // Touch throttle is automatic, which would over-rev every start: on the
         // grid, touch players rev with the NITRO button instead (nitro is inert there).
-        if (input.touch && sim.phase === 'countdown') controls = { ...controls, throttle: controls.nitro ? 1 : 0 };
+        if (input.device() === 'touch' && sim.phase === 'countdown') controls = { ...controls, throttle: controls.nitro ? 1 : 0 };
         // A shift is an edge: kept until a step actually runs, then applied once.
         const shift = input.consumeShift();
         if (shift !== 0) pendingShift = shift;

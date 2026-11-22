@@ -59,6 +59,8 @@ export interface Controls {
   shift?: ShiftRequest;
   /** Hold after the flag to do a burnout. */
   burnout?: boolean;
+  /** `steer` comes from an analog stick: applied without the keyboard easing. */
+  analogSteer?: boolean;
 }
 
 export type SimEvent =
@@ -413,7 +415,8 @@ function stepCar(sim: RaceSim, car: CarSim, input: Controls, dt: number): void {
 
   // Steering: yaw rate is capped by grip, so fast cars need room (or handling parts).
   // A keyboard is all-or-nothing: ease the player's wheel in so taps do not snap the car sideways.
-  const steerResponse = car.isPlayer ? 7 : 14;
+  // A stick is already progressive, and the easing would only add lag.
+  const steerResponse = car.isPlayer && !input.analogSteer ? 7 : 14;
   car.steer += (clamp(input.steer, -1, 1) - car.steer) * Math.min(1, dt * steerResponse);
   const absForward = Math.abs(forward);
   // Spinning rear tyres have less to give sideways (last step's value: one step of lag is invisible).

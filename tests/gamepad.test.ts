@@ -8,6 +8,8 @@ import {
   pickPad,
   readPad,
   RUMBLES,
+  SLIDE_RUMBLE_EVERY,
+  slideRumble,
   stickValue,
   triggerValue,
   type PadSnapshot,
@@ -109,6 +111,13 @@ describe('gamepad mapping', () => {
       expect(rumble.durationMs).toBeGreaterThan(0);
     }
     expect(impactRumble(0.5, true)!.weak).toBeGreaterThan(impactRumble(0.5, true)!.strong);
+  });
+
+  it('buzzes through a slide, harder the further it goes, pulses chaining without gaps', () => {
+    expect(slideRumble(1).weak).toBeGreaterThan(slideRumble(0.2).weak);
+    expect(slideRumble(1).strong).toBeLessThanOrEqual(1);
+    expect(slideRumble(Number.NaN)).toEqual(slideRumble(0));
+    expect(slideRumble(0.5).durationMs).toBeGreaterThan(SLIDE_RUMBLE_EVERY * 1000);
   });
 });
 

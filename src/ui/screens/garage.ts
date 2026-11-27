@@ -77,24 +77,29 @@ function repairBlock(game: GameState, car: OwnedCar): string {
     </div>`;
 }
 
-function paintBlock(car: OwnedCar): string {
+function paintBlock(car: OwnedCar, preview: string | undefined, money: number): string {
+  const selected = preview ?? car.paint.toLowerCase();
+  const damaged = Boolean(car.bodyDamage?.length);
   const paints = PAINTS.map((paint) => {
-    const on = paint.hex.toLowerCase() === car.paint.toLowerCase();
-    return `<button type="button" class="swatch${on ? ' on' : ''}" data-action="paint" data-hex="${esc(paint.hex)}" title="${esc(paint.name)}" aria-label="Peinture ${esc(paint.name)}" aria-pressed="${on}" style="--c:${safeColor(paint.hex, '#888')}"></button>`;
+    const on = paint.hex === selected;
+    return `<button type="button" class="swatch${on ? ' on' : ''}" data-action="preview-paint" data-hex="${esc(paint.hex)}" title="${esc(paint.name)}" aria-label="Essayer la peinture ${esc(paint.name)}" aria-pressed="${on}" style="--c:${safeColor(paint.hex, '#888')}"></button>`;
   }).join('');
   const neons = NEONS.map((neon) => {
     const on = neon.hex.toLowerCase() === car.neon.toLowerCase();
     const none = neon.hex === '';
     return `<button type="button" class="swatch neon${none ? ' none' : ''}${on ? ' on' : ''}" data-action="neon" data-hex="${esc(neon.hex)}" title="${esc(neon.name)}" aria-label="Néon ${esc(neon.name)}" aria-pressed="${on}" style="--c:${safeColor(neon.hex, 'transparent')}">${none ? '∅' : ''}</button>`;
   }).join('');
+  const buyLabel = damaged ? 'Débosseler et repeindre' : 'Acheter la peinture';
+  const previewName = PAINTS.find((paint) => paint.hex === preview)?.name;
   return `
     <div class="panel paint">
-      <h4>Peinture <span class="price-note">${esc(euro(PAINT_JOB_PRICE))} le coup de pistolet</span></h4>
+      <h4>Peinture <span class="price-note">${previewName ? `Aperçu · ${esc(previewName)}` : 'Essai gratuit'}</span></h4>
       <div class="swatches">${paints}</div>
-      ${car.bodyDamage?.length ? button({
-        action: 'paint', data: { hex: car.paint }, variant: 'ghost', small: true,
-        label: `Débosseler et repeindre dans cette teinte (${euro(PAINT_JOB_PRICE)})`,
-      }) : ''}
+      <div class="paint-actions">
+        ${button({ action: 'buy-paint', label: `${buyLabel} · ${euro(PAINT_JOB_PRICE)}`, small: true, disabled: (!preview && !damaged) || money < PAINT_JOB_PRICE })}
+        ${preview ? button({ action: 'cancel-paint', label: 'Annuler', variant: 'ghost', small: true }) : ''}
+        ${money < PAINT_JOB_PRICE ? `<span class="hint">Il te manque ${euro(PAINT_JOB_PRICE - money)}.</span>` : ''}
+      </div>
       <h4>Néons de bas de caisse <span class="price-note">${esc(euro(NEON_PRICE))} la pose</span></h4>
       <div class="swatches">${neons}</div>
     </div>`;
@@ -248,6 +253,7 @@ export function renderGarage(view: View): string {
   const car = activeCar(game);
   const model = carModel(car.modelId);
   const stats = effectiveStats(game, car);
+  const preview = view.ui.paintPreview?.hex;
   return `
     <div class="garage">
       <section class="garage-left">
@@ -256,12 +262,12 @@ export function renderGarage(view: View): string {
             <p class="kicker">${esc(model.brand)}</p>
             <h2>${esc(model.name)}</h2>
           </div>
-          ${carCanvas(lookOf(car), 'hero', 640, 340)}
+          ${carCanvas({ ...lookOf(car), paint: preview ?? car.paint }, 'hero', 640, 340)}
           <p class="garage-tagline">${esc(model.tagline)}</p>
         </div>
         ${carSwitcher(game, car)}
+        ${paintBlock(car, preview, game.money)}
         ${repairBlock(game, car)}
-        ${paintBlock(car)}
         ${transferBlock(game, car)}
       </section>
       <section class="garage-right">

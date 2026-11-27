@@ -14,6 +14,7 @@ import {
   equipPart,
   eventRaceSetup,
   isDistrictUnlocked,
+  lookOf,
   markEndingSeen,
   markIntroSeen,
   newGame,
@@ -48,6 +49,7 @@ import { renderCarPreview } from '../race/carSprite';
 import { runRace, type RaceOptions } from '../race/index';
 import { button } from './components';
 import { esc, euro } from './dom';
+import { playPaintSpray } from './paintSpray';
 import { renderBoss, renderPreRace } from './screens/courses';
 import { renderHub } from './screens/hub';
 import { renderResult } from './screens/result';
@@ -93,6 +95,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     bossStep: 0,
     stakeUid: undefined,
     inventoryFilter: 'all',
+    paintPreview: undefined,
     result: undefined,
     trialResult: undefined,
     confirm: undefined,
@@ -252,6 +255,9 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     const pageY = window.scrollY;
     const inner = sameView ? captureScroll() : new Map<string, { left: number; top: number }>();
 
+    if (ui.screen !== 'hub' || ui.tab !== 'garage' || ui.paintPreview?.carUid !== game?.activeCarUid) {
+      ui.paintPreview = undefined;
+    }
     root.innerHTML = screenHtml() + confirmHtml();
     document.body.dataset['screen'] = ui.screen;
 
@@ -398,6 +404,10 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
   }
 
   // ───────────────────────── Actions ─────────────────────────
+  function focusPaintSwatch(): void {
+    root.querySelector<HTMLElement>('[data-action="preview-paint"][aria-pressed="true"]')?.focus({ preventScroll: true });
+  }
+
   function enterCareer(): void {
     const state = requireGame();
     ui.districtId = currentDistrictId(state);
@@ -577,11 +587,30 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
         );
       }
     },
-    paint: (el) => {
-      const state = requireGame();
+    'preview-paint': (el) => {
+      const car = activeCar(requireGame());
       const hex = el.dataset['hex'];
-      if (hex === undefined) return;
-      dispatch(repaintCar(state, activeCar(state).uid, hex), 'equip');
+      if (!hex) return;
+      go({ paintPreview: hex === car.paint.toLowerCase() ? undefined : { carUid: car.uid, hex } });
+      focusPaintSwatch();
+    },
+    'cancel-paint': () => {
+      go({ paintPreview: undefined });
+      focusPaintSwatch();
+    },
+    'buy-paint': () => {
+      const state = requireGame();
+      const car = activeCar(state);
+      const paint = ui.paintPreview?.hex ?? car.paint;
+      const next = repaintCar(state, car.uid, paint);
+      if (!next.ok) return fail(next.error);
+      if (next.value === state) return;
+      ui.paintPreview = undefined;
+      dispatch(next.value, 'paint');
+      focusPaintSwatch();
+      toast('Peinture appliquée !', 'good');
+      const canvas = root.querySelector<HTMLCanvasElement>('.garage-stage .car-canvas');
+      if (canvas) playPaintSpray(canvas, lookOf(car), paint);
     },
     neon: (el) => {
       const state = requireGame();
@@ -672,6 +701,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     if (racing || event.repeat) return;
     if (event.key === 'Escape') {
       if (ui.confirm) go({ confirm: undefined });
+      else if (ui.paintPreview) actions['cancel-paint']?.(root);
       else if (ui.screen === 'prerace' || ui.screen === 'boss') go({ screen: 'hub' });
       return;
     }

@@ -77,20 +77,26 @@ function repairBlock(game: GameState, car: OwnedCar): string {
     </div>`;
 }
 
-function paintBlock(car: OwnedCar, preview: string | undefined, money: number): string {
+function appearanceBlock(view: View, car: OwnedCar): string {
+  const money = view.game.money;
+  const preview = view.ui.paintPreview?.hex;
+  const neonPreview = view.ui.neonPreview?.hex;
   const selected = preview ?? car.paint.toLowerCase();
+  const selectedNeon = neonPreview ?? car.neon.toLowerCase();
   const damaged = Boolean(car.bodyDamage?.length);
   const paints = PAINTS.map((paint) => {
     const on = paint.hex === selected;
     return `<button type="button" class="swatch${on ? ' on' : ''}" data-action="preview-paint" data-hex="${esc(paint.hex)}" title="${esc(paint.name)}" aria-label="Essayer la peinture ${esc(paint.name)}" aria-pressed="${on}" style="--c:${safeColor(paint.hex, '#888')}"></button>`;
   }).join('');
   const neons = NEONS.map((neon) => {
-    const on = neon.hex.toLowerCase() === car.neon.toLowerCase();
+    const on = neon.hex === selectedNeon;
     const none = neon.hex === '';
-    return `<button type="button" class="swatch neon${none ? ' none' : ''}${on ? ' on' : ''}" data-action="neon" data-hex="${esc(neon.hex)}" title="${esc(neon.name)}" aria-label="Néon ${esc(neon.name)}" aria-pressed="${on}" style="--c:${safeColor(neon.hex, 'transparent')}">${none ? '∅' : ''}</button>`;
+    return `<button type="button" class="swatch neon${none ? ' none' : ''}${on ? ' on' : ''}" data-action="preview-neon" data-hex="${esc(neon.hex)}" title="${esc(neon.name)}" aria-label="${none ? 'Essayer sans néon' : `Essayer le néon ${esc(neon.name)}`}" aria-pressed="${on}" style="--c:${safeColor(neon.hex, 'transparent')}">${none ? '∅' : ''}</button>`;
   }).join('');
   const buyLabel = damaged ? 'Débosseler et repeindre' : 'Acheter la peinture';
   const previewName = PAINTS.find((paint) => paint.hex === preview)?.name;
+  const neonName = NEONS.find((neon) => neon.hex === neonPreview)?.name;
+  const neonPrice = neonPreview === '' ? 0 : NEON_PRICE;
   return `
     <div class="panel paint">
       <h4>Peinture <span class="price-note">${previewName ? `Aperçu · ${esc(previewName)}` : 'Essai gratuit'}</span></h4>
@@ -100,8 +106,18 @@ function paintBlock(car: OwnedCar, preview: string | undefined, money: number): 
         ${preview ? button({ action: 'cancel-paint', label: 'Annuler', variant: 'ghost', small: true }) : ''}
         ${money < PAINT_JOB_PRICE ? `<span class="hint">Il te manque ${euro(PAINT_JOB_PRICE - money)}.</span>` : ''}
       </div>
-      <h4>Néons de bas de caisse <span class="price-note">${esc(euro(NEON_PRICE))} la pose</span></h4>
+      <h4>Néons de bas de caisse <span class="price-note">${neonName ? `Aperçu · ${esc(neonName)}` : 'Essai gratuit'}</span></h4>
       <div class="swatches">${neons}</div>
+      <div class="paint-actions">
+        ${button({
+          action: 'confirm-neon',
+          label: neonPreview === '' ? 'Retirer le néon · Gratuit' : `Installer le néon · ${euro(NEON_PRICE)}`,
+          small: true,
+          disabled: neonPreview === undefined || money < neonPrice,
+        })}
+        ${neonPreview !== undefined ? button({ action: 'cancel-neon', label: 'Annuler l’essai du néon', variant: 'ghost', small: true }) : ''}
+        ${neonPreview !== undefined && money < neonPrice ? `<span class="hint">Il te manque ${euro(neonPrice - money)}.</span>` : ''}
+      </div>
     </div>`;
 }
 
@@ -253,7 +269,11 @@ export function renderGarage(view: View): string {
   const car = activeCar(game);
   const model = carModel(car.modelId);
   const stats = effectiveStats(game, car);
-  const preview = view.ui.paintPreview?.hex;
+  const look = {
+    ...lookOf(car),
+    paint: view.ui.paintPreview?.hex ?? car.paint,
+    neon: view.ui.neonPreview?.hex ?? car.neon,
+  };
   return `
     <div class="garage">
       <section class="garage-left">
@@ -262,11 +282,11 @@ export function renderGarage(view: View): string {
             <p class="kicker">${esc(model.brand)}</p>
             <h2>${esc(model.name)}</h2>
           </div>
-          ${carCanvas({ ...lookOf(car), paint: preview ?? car.paint }, 'hero', 640, 340)}
+          ${carCanvas(look, 'hero', 640, 340)}
           <p class="garage-tagline">${esc(model.tagline)}</p>
         </div>
         ${carSwitcher(game, car)}
-        ${paintBlock(car, preview, game.money)}
+        ${appearanceBlock(view, car)}
         ${repairBlock(game, car)}
         ${transferBlock(game, car)}
       </section>

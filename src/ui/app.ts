@@ -96,6 +96,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     stakeUid: undefined,
     inventoryFilter: 'all',
     paintPreview: undefined,
+    neonPreview: undefined,
     result: undefined,
     trialResult: undefined,
     confirm: undefined,
@@ -255,8 +256,8 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     const pageY = window.scrollY;
     const inner = sameView ? captureScroll() : new Map<string, { left: number; top: number }>();
 
-    if (ui.screen !== 'hub' || ui.tab !== 'garage' || ui.paintPreview?.carUid !== game?.activeCarUid) {
-      ui.paintPreview = undefined;
+    for (const key of ['paintPreview', 'neonPreview'] as const) {
+      if (ui.screen !== 'hub' || ui.tab !== 'garage' || ui[key]?.carUid !== game?.activeCarUid) ui[key] = undefined;
     }
     root.innerHTML = screenHtml() + confirmHtml();
     document.body.dataset['screen'] = ui.screen;
@@ -404,8 +405,15 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
   }
 
   // ───────────────────────── Actions ─────────────────────────
-  function focusPaintSwatch(): void {
-    root.querySelector<HTMLElement>('[data-action="preview-paint"][aria-pressed="true"]')?.focus({ preventScroll: true });
+  function focusSwatch(kind: 'paint' | 'neon'): void {
+    root.querySelector<HTMLElement>(`[data-action="preview-${kind}"][aria-pressed="true"]`)?.focus({ preventScroll: true });
+  }
+
+  function previewColor(kind: 'paint' | 'neon', hex?: string): void {
+    const car = activeCar(requireGame());
+    const preview = hex === undefined || hex === car[kind].toLowerCase() ? undefined : { carUid: car.uid, hex };
+    go(kind === 'paint' ? { paintPreview: preview } : { neonPreview: preview });
+    focusSwatch(kind);
   }
 
   function enterCareer(): void {
@@ -587,17 +595,8 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
         );
       }
     },
-    'preview-paint': (el) => {
-      const car = activeCar(requireGame());
-      const hex = el.dataset['hex'];
-      if (!hex) return;
-      go({ paintPreview: hex === car.paint.toLowerCase() ? undefined : { carUid: car.uid, hex } });
-      focusPaintSwatch();
-    },
-    'cancel-paint': () => {
-      go({ paintPreview: undefined });
-      focusPaintSwatch();
-    },
+    'preview-paint': (el) => previewColor('paint', el.dataset['hex']),
+    'cancel-paint': () => previewColor('paint'),
     'buy-paint': () => {
       const state = requireGame();
       const car = activeCar(state);
@@ -607,16 +606,23 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
       if (next.value === state) return;
       ui.paintPreview = undefined;
       dispatch(next.value, 'paint');
-      focusPaintSwatch();
+      focusSwatch('paint');
       toast('Peinture appliquée !', 'good');
       const canvas = root.querySelector<HTMLCanvasElement>('.garage-stage .car-canvas');
-      if (canvas) playPaintSpray(canvas, lookOf(car), paint);
+      if (canvas) playPaintSpray(canvas, { ...lookOf(car), neon: ui.neonPreview?.hex ?? car.neon }, paint);
     },
-    neon: (el) => {
+    'preview-neon': (el) => previewColor('neon', el.dataset['hex']),
+    'cancel-neon': () => previewColor('neon'),
+    'confirm-neon': () => {
+      const preview = ui.neonPreview;
+      if (!preview) return;
       const state = requireGame();
-      const hex = el.dataset['hex'];
-      if (hex === undefined) return;
-      dispatch(setNeon(state, activeCar(state).uid, hex), 'equip');
+      const next = setNeon(state, preview.carUid, preview.hex);
+      if (!next.ok) return fail(next.error);
+      ui.neonPreview = undefined;
+      dispatch(next.value, 'equip');
+      focusSwatch('neon');
+      toast(preview.hex === '' ? 'Néon retiré.' : 'Néon installé !', 'good');
     },
     transfer: (el) => {
       const state = requireGame();
@@ -701,7 +707,11 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
     if (racing || event.repeat) return;
     if (event.key === 'Escape') {
       if (ui.confirm) go({ confirm: undefined });
-      else if (ui.paintPreview) actions['cancel-paint']?.(root);
+      else if (ui.neonPreview || ui.paintPreview) {
+        const kind = ui.neonPreview ? 'neon' : 'paint';
+        go({ paintPreview: undefined, neonPreview: undefined });
+        focusSwatch(kind);
+      }
       else if (ui.screen === 'prerace' || ui.screen === 'boss') go({ screen: 'hub' });
       return;
     }

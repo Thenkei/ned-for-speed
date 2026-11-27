@@ -44,6 +44,12 @@ parking du Mégamarché avec la Biquette de mamie et veut le respect des cinq gr
   « progressive » (une touche maintenue va un peu au-delà de la limite, un coup de touche non) ;
   au stick elle va plus loin, plus précise et plus risquée. Traces de pneus, crissement, vibration
   de la manette et un conseil pour les premières glisses.
+- **Drift** : une glisse *maîtrisée* recharge la nitro. Tenue assez longtemps, à bonne vitesse,
+  sur la piste, sans rien toucher, et rattrapée sans perdre trop de vitesse, elle rend jusqu'à
+  30 % de la bouteille (plus elle est longue et profonde, plus elle paie ; un compteur « DRIFT
+  +x % » s'affiche au-dessus de Ned). Contact, sortie de piste ou glisse qui fait fondre la vitesse :
+  « Drift gâché », rien de gagné, et la glisse a quand même coûté son temps. Les adversaires ne
+  driftent pas : c'est un outil du joueur.
 - **Pluie** : certaines courses (tirées au sort, annoncées avant le départ) se courent sous la pluie :
   ça glisse. Le volant tourne autant qu'au sec mais les pneus tiennent moins (les glisses arrivent
   ~20 % plus tôt), une glisse sur l'eau se rattrape plus difficilement et l'accélérateur fait plus
@@ -111,8 +117,8 @@ scripts      Outils de réglage, à lancer avec `npx vite-node scripts/<nom>.ts`
              le taux de victoire de Ned sur N graines par écart de niveau (`SEEDS=20
              WEATHER=wet`), `keyboard-bot` vérifie qu'un pilotage « tout ou rien » au clavier
              reste compétitif, `handling-probe` mesure combien chaque type de pilote glisse
-             (IA, clavier tout ou rien, clavier tapoté ; `HANDLING='{...}'` pour essayer
-             d'autres réglages), `track-info` contrôle la géométrie des circuits.
+             et drifte proprement (IA, clavier tout ou rien, clavier tapoté ;
+             `HANDLING='{...}'` / `DRIFT='{...}'` pour essayer d'autres réglages), `track-info` contrôle la géométrie des circuits.
 ```
 
 `/race-dev.html?track=port&level=60&auto=1` lance une course seule en mode développement
@@ -132,6 +138,7 @@ Tous les réglages sont centralisés dans `src/domain/tuning.ts` :
 | `RIVAL_LAUNCH_TUNING` | erreur de timing des adversaires au départ (±1,8 s × (1 − habileté)), temps de réaction pour rattraper un patinage |
 | `WHEELSPIN_TUNING` | perte de grip latéral quand ça patine, rendement d'un pneu qui patine, léger dandinement |
 | `HANDLING_TUNING` | tenue de route : marge de grip réelle des pneus, portée du braquage au-delà de la limite (stick 1,3, clavier/tactile 1,15), grip d'un pneu qui glisse, grip perdu au freinage, survirage à l'accélération, angle de glisse maximal, vitesse perdue en glisse, grip exploité par les adversaires selon leur témérité |
+| `DRIFT_TUNING` | drift récompensé : glisse minimale, vitesse minimale, durée minimale, temps de « reprise » qui clôt un drift, vitesse de sortie minimale, nitro gagnée par seconde de drift (20 % de la bouteille à pleine glisse), plafond par drift (30 %) |
 | `WEATHER_PROFILES` | par météo : grip en virage, freinage, rattrapage de glisse, grip en glisse et survirage (pluie), motricité, décalage du seuil de patinage, durée du patinage, multiplicateur de prime (×1,5 sous la pluie) |
 | `FORECAST_TUNING` | probabilité de pluie d'une course de carrière |
 | `ENGINE_SOUND_PROFILES` (`src/infra/engineProfiles.ts`) | la voix de chaque carrosserie : nombre de cylindres (hauteur = tr/min × cylindres / 120), harmoniques, glouglou, brillance, grain, pétarades, résonances d'échappement, distribution variable, turbo (sifflement, temps de réponse, dump valve) |

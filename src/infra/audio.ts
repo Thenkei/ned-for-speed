@@ -7,7 +7,7 @@
 import { DEFAULT_ENGINE_PROFILE, MAX_BANG, type EngineSoundProfile } from './engineProfiles';
 import type { EngineSoundParams, RivalSoundParams } from './engineSound';
 
-export type UiSound = 'click' | 'buy' | 'error' | 'equip' | 'win' | 'lose' | 'jewel';
+export type UiSound = 'click' | 'buy' | 'error' | 'equip' | 'paint' | 'win' | 'lose' | 'jewel';
 export type RaceSound =
   | 'beep'
   | 'go'
@@ -285,6 +285,23 @@ function shiftCut(direction: number): void {
 
 const UI_SOUNDS: Readonly<Record<UiSound, () => void>> = {
   click: () => tone({ frequency: 520, to: 700, duration: 0.06, volume: 0.08 }),
+  paint: () => {
+    const ctx = ensureContext();
+    if (!ctx || !master || muted) return;
+    const now = ctx.currentTime;
+    const gain = silentGain(ctx, master);
+    const nozzle = filtered(ctx, 'bandpass', 6200, 0.85, gain);
+    const hiss = noiseLayer(ctx, nozzle, Math.random());
+    // The nozzle opens sharply, hisses through the paint pass, then cuts off.
+    nozzle.frequency.setValueAtTime(6200, now);
+    nozzle.frequency.exponentialRampToValueAtTime(4400, now + 0.85);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.34, now + 0.018);
+    gain.gain.linearRampToValueAtTime(0.23, now + 0.12);
+    gain.gain.linearRampToValueAtTime(0.29, now + 1);
+    gain.gain.linearRampToValueAtTime(0, now + 1.1);
+    hiss.stop(now + 1.1);
+  },
   equip: () => {
     tone({ frequency: 240, to: 180, duration: 0.07, type: 'sawtooth', volume: 0.12 });
     tone({ frequency: 620, duration: 0.07, delay: 0.07, volume: 0.1 });

@@ -606,7 +606,7 @@ export function startApp(root: HTMLElement, toastHost: HTMLElement): void {
       if (!next.ok) return fail(next.error);
       if (next.value === state) return;
       ui.paintPreview = undefined;
-      dispatch(next.value, 'equip');
+      dispatch(next.value, 'paint');
       focusPaintSwatch();
       toast('Peinture appliquée !', 'good');
       const canvas = root.querySelector<HTMLCanvasElement>('.garage-stage .car-canvas');

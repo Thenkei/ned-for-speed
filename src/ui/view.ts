@@ -58,13 +58,19 @@ export interface UiState {
   bossStep: number;
   stakeUid: string | undefined;
   inventoryFilter: Slot | 'all';
-  paintPreview: { readonly carUid: string; readonly hex: string } | undefined;
+  paintPreview: ColorPreview | undefined;
+  neonPreview: ColorPreview | undefined;
   result: ResultView | undefined;
   trialResult: TrialResultView | undefined;
   confirm: ConfirmView | undefined;
   hasSave: boolean;
   muted: boolean;
   transmission: TransmissionMode;
+}
+
+interface ColorPreview {
+  readonly carUid: string;
+  readonly hex: string;
 }
 
 /** What a screen needs to render once a career is loaded. */

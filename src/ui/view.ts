@@ -58,6 +58,7 @@ export interface UiState {
   bossStep: number;
   stakeUid: string | undefined;
   inventoryFilter: Slot | 'all';
+  paintPreview: { readonly carUid: string; readonly hex: string } | undefined;
   result: ResultView | undefined;
   trialResult: TrialResultView | undefined;
   confirm: ConfirmView | undefined;
